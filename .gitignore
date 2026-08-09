@@ -1,0 +1,44 @@
+# Local secrets loaded automatically by backend/src/config/env.py.
+.env
+.env.*
+!.env.example
+
+# Local upstream source used only for implementation comparison.
+ragflow-main/
+
+# Python caches and test artifacts.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local editor and OS files.
+.vscode/
+.DS_Store
+
+# Downloaded T2Retrieval data and generated benchmark artifacts.
+dataset/T2Retrieval/*.parquet
+dataset/T2Retrieval/*_preview.csv
+dataset/T2Retrieval/cache/
+dataset/T2Retrieval/embeddings/
+
+# Generated local test reports and editor scratch files.
+backend/tests/tempCodeRunnerFile.py
+backend/tests/parsing_test/parsing_report_*.txt
+backend/tests/walkthrough_output.txt
+
+# Runtime output.
+*.log
+
+# Local tiktoken vocabulary cache.
+9b5ad71b2ce5302211f9c61530b329a4922fc6a4
+
+global_proxy_off
+global_proxy_on
+local_proxy_off
+local_proxy_on
+PROXY_GUIDE.md
+PROXY_USAGE.md

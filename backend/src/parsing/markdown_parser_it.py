@@ -1,9 +1,10 @@
 # 基于 markdown-it-py 的 Markdown 解析器（改进版）
 from __future__ import annotations
 
-from pathlib import Path
 from markdown_it import MarkdownIt
-from markdown_it.token import Token
+
+from .html_parser import HtmlParser
+from .models import ParseSource, parse_source_from_config
 
 
 class MarkdownParserIt:
@@ -20,7 +21,7 @@ class MarkdownParserIt:
         """初始化 markdown-it 解析器，启用 GFM 表格支持。"""
         self._md = MarkdownIt().enable("table")
 
-    def parse(self, doc_id: str, parse_config: dict) -> list[dict]:
+    def parse(self, doc_id: str, parse_config: dict | ParseSource) -> list[dict]:
         """解析 Markdown 文件，输出结构化 block 列表。
 
         参数：
@@ -35,12 +36,10 @@ class MarkdownParserIt:
             - order: 顺序号
             - source_span: 源文件位置
         """
-        file_path = Path(parse_config.get("file_path", ""))
-        if not file_path.exists():
-            raise FileNotFoundError(f"source file missing for doc {doc_id}: {file_path}")
-
-        # 读取文件内容
-        text = file_path.read_text(encoding="utf-8", errors="ignore")
+        source = (
+            parse_config if isinstance(parse_config, ParseSource) else parse_source_from_config(parse_config)
+        )
+        text = source.read_text()
         lines = text.splitlines()
 
         # 先手动提取 frontmatter（markdown-it 不原生支持）
@@ -80,6 +79,7 @@ class MarkdownParserIt:
 
         # 处理剩余内容（跳过 frontmatter 后的部分）
         remaining_text = "\n".join(lines[start_idx:])
+        remaining_lines = lines[start_idx:]
         if not remaining_text.strip():
             return blocks
 
@@ -128,7 +128,7 @@ class MarkdownParserIt:
                     })
 
             # 处理代码块（```fence）
-            elif token_type == "fence":
+            elif token_type in {"fence", "code_block"}:
                 content = token.content
                 order += 1
                 blocks.append({
@@ -148,6 +148,39 @@ class MarkdownParserIt:
                     "metadata": {},
                 })
 
+            elif token_type == "html_block":
+                content = token.content
+                try:
+                    html_blocks = HtmlParser().parse(
+                        doc_id,
+                        ParseSource(source_type="html", name=source.name, text=content),
+                    )
+                except ValueError as exc:
+                    if "no parseable content" not in str(exc):
+                        raise
+                    html_blocks = []
+                for html_block in html_blocks:
+                    order += 1
+                    blocks.append(
+                        {
+                            **html_block,
+                            "section_path": [*section_path, *html_block.get("section_path", [])],
+                            "order": order,
+                            "source_span": {
+                                "start_line": (token.map[0] if token.map else 0) + base_line,
+                                "end_line": (token.map[1] if token.map else 0) + base_line,
+                                "start_char": 0,
+                                "end_char": len(content),
+                                "page_no": None,
+                                "accuracy": "line_only",
+                            },
+                            "metadata": {
+                                **dict(html_block.get("metadata", {})),
+                                "embedded_in_markdown": True,
+                            },
+                        }
+                    )
+
             # 处理表格（直接从原始文本提取）
             elif token_type == "table_open":
                 # 从原始文本中提取表格
@@ -163,13 +196,11 @@ class MarkdownParserIt:
                 if j < len(tokens) and tokens[j].map:
                     end_line_num = max(end_line_num, (tokens[j].map[1] if tokens[j].map else 0) + base_line)
 
-                # 从原始行中提取表格
-                table_lines = []
-                for line_idx in range(start_line_num - base_line, min(end_line_num - base_line + 1, len(lines))):
-                    if line_idx < len(lines) and lines[line_idx].strip().startswith("|"):
-                        table_lines.append(lines[line_idx])
-
-                table_text = "\n".join(table_lines)
+                # Preserve the complete mapped GFM table. Leading pipes are
+                # optional, so filtering rows by ``startswith('|')`` loses
+                # valid tables.
+                map_start, map_end = token.map or (0, 0)
+                table_text = "\n".join(remaining_lines[map_start:map_end])
                 if table_text.strip():
                     order += 1
                     blocks.append({
@@ -193,40 +224,20 @@ class MarkdownParserIt:
 
             # 处理列表
             elif token_type in {"bullet_list_open", "ordered_list_open"}:
-                # 收集列表项
-                list_items = []
-                list_type = "bullet" if token_type == "bullet_list_open" else "ordered"
+                # Preserve the container's raw mapped source. This keeps
+                # nested fenced/indented code and nested lists losslessly.
                 list_start_line = (token.map[0] if token.map else 0) + base_line
-                list_end_line = list_start_line
-
+                list_end_line = (token.map[1] if token.map else 0) + base_line
+                map_start, map_end = token.map or (0, 0)
+                list_text = "\n".join(remaining_lines[map_start:map_end])
+                depth = 1
                 j = i + 1
-                while j < len(tokens):
-                    sub_token = tokens[j]
-                    if sub_token.type in {"bullet_list_close", "ordered_list_close"}:
-                        break
-
-                    # 收集列表项内容
-                    if sub_token.type == "list_item_open":
-                        item_lines = []
-                        k = j + 1
-                        while k < len(tokens) and tokens[k].type != "list_item_close":
-                            if tokens[k].type == "inline":
-                                content = tokens[k].content.strip()
-                                if content:
-                                    # 添加列表标记
-                                    marker = "-" if list_type == "bullet" else "1."
-                                    item_lines.append(f"{marker} {content}")
-                            k += 1
-
-                        if item_lines:
-                            list_items.extend(item_lines)
-                            if tokens[k - 1].map:
-                                list_end_line = max(list_end_line, (tokens[k - 1].map[1] if tokens[k - 1].map else 0) + base_line)
-                        j = k + 1
-                    else:
-                        j += 1
-
-                list_text = "\n".join(list_items)
+                while j < len(tokens) and depth:
+                    if tokens[j].type in {"bullet_list_open", "ordered_list_open"}:
+                        depth += 1
+                    elif tokens[j].type in {"bullet_list_close", "ordered_list_close"}:
+                        depth -= 1
+                    j += 1
                 if list_text.strip():
                     order += 1
                     blocks.append({
@@ -246,24 +257,22 @@ class MarkdownParserIt:
                         "metadata": {},
                     })
 
-                i = j  # 跳到 list_close
+                i = j - 1  # 跳到匹配的 list_close
 
             # 处理引用块
             elif token_type == "blockquote_open":
-                # 收集引用内容
-                quote_lines = []
                 quote_start_line = (token.map[0] if token.map else 0) + base_line
-                quote_end_line = quote_start_line
-
+                quote_end_line = (token.map[1] if token.map else 0) + base_line
+                map_start, map_end = token.map or (0, 0)
+                quote_text = "\n".join(remaining_lines[map_start:map_end])
+                depth = 1
                 j = i + 1
-                while j < len(tokens) and tokens[j].type != "blockquote_close":
-                    if tokens[j].type == "inline":
-                        quote_lines.append(tokens[j].content)
-                        if tokens[j].map:
-                            quote_end_line = max(quote_end_line, (tokens[j].map[1] if tokens[j].map else 0) + base_line)
+                while j < len(tokens) and depth:
+                    if tokens[j].type == "blockquote_open":
+                        depth += 1
+                    elif tokens[j].type == "blockquote_close":
+                        depth -= 1
                     j += 1
-
-                quote_text = "\n".join(quote_lines)
                 if quote_text.strip():
                     order += 1
                     blocks.append({
@@ -283,7 +292,7 @@ class MarkdownParserIt:
                         "metadata": {},
                     })
 
-                i = j  # 跳到 blockquote_close
+                i = j - 1  # 跳到匹配的 blockquote_close
 
             # 处理水平分割线
             elif token_type == "hr":
@@ -333,5 +342,23 @@ class MarkdownParserIt:
 
         if not blocks:
             raise ValueError("no parseable content found")
+
+        # markdown-it reports line ranges. Convert them to document-absolute
+        # character ranges, while being honest that Markdown marker removal
+        # makes normalized block text only line-accurate against the raw file.
+        line_offsets = [0]
+        for raw_line in text.splitlines(keepends=True):
+            line_offsets.append(line_offsets[-1] + len(raw_line))
+        for block in blocks:
+            span = block.get("source_span") or {}
+            start_line = span.get("start_line")
+            end_line = span.get("end_line")
+            if start_line is not None and 1 <= start_line <= len(line_offsets):
+                span["start_char"] = line_offsets[start_line - 1]
+            if end_line is not None and end_line >= 1:
+                end_index = min(max(0, end_line - 1), len(line_offsets) - 1)
+                span["end_char"] = line_offsets[end_index]
+            span["accuracy"] = "line_only"
+            block["source_span"] = span
 
         return blocks

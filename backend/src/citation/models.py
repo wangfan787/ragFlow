@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import field
 
 
 @dataclass
@@ -13,6 +14,13 @@ class Citation:
     snippet: str
     page_no: int | None
     section_path: list[str]
+    context_chunk_id: str = ""
+    context_snippet: str = ""
+    context_span: dict = field(default_factory=dict)
+    prompt_span: dict = field(default_factory=dict)
+    matched_children: list[dict] = field(default_factory=list)
+    primary_matched_child_id: str | None = None
+    source_span: dict = field(default_factory=dict)
 
 
 def validate_citation(citation: Citation) -> None:
@@ -22,3 +30,5 @@ def validate_citation(citation: Citation) -> None:
         raise ValueError("citation must include doc_id and chunk_id")
     if not citation.snippet.strip():
         raise ValueError("citation snippet cannot be empty")
+    if citation.context_chunk_id != citation.chunk_id:
+        raise ValueError("citation context_chunk_id must identify the prompt evidence")

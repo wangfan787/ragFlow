@@ -19,6 +19,7 @@ EmbeddingVector = list[float]
 class EmbeddingModel(Protocol):
     """Embedding 模型协议，将文本编码为向量。"""
     backend_name: str
+    max_input_tokens: int | None
 
     def encode(self, texts: Sequence[str]) -> list[EmbeddingVector]: ...
 
@@ -31,10 +32,10 @@ def validate_embedding_vector(vector: Sequence[float]) -> None:
 
 @dataclass
 class VectorRecord:
-    """向量存储中的一条记录。"""
+    """Search storage record; context Parents deliberately have no vector."""
     id: str                    # 记录唯一ID
     doc_id: str                # 所属文档ID
-    vector: list[float]        # 向量
+    vector: list[float] | None # Child vector; None for context-only Parent
     payload: dict[str, Any] = field(default_factory=dict)   # 附加元数据
 
 
@@ -51,6 +52,8 @@ class SearchStore(Protocol):
     """向量检索存储协议，支持增删改查。"""
 
     def delete_by_doc_id(self, doc_id: str) -> None: ...   # 按文档ID删除
+
+    def delete_stale_by_doc_id(self, doc_id: str, keep_ids: list[str]) -> None: ...
 
     def upsert(self, records: list[VectorRecord]) -> None: ...   # 插入或更新向量记录
 
@@ -69,6 +72,18 @@ class SearchStore(Protocol):
     ) -> list[dict]: ...                          # 关键词搜索
 
     def query_by_ids(self, ids: list[str]) -> list[VectorRecord]: ...   # 按ID批量查询
+
+
+class ChatModel(Protocol):
+    """QA model capabilities required for strict prompt budgeting."""
+
+    model_name: str
+    context_limit_tokens: int
+    completion_reserve_tokens: int
+
+    def count_tokens(self, messages: Sequence[dict[str, str]]) -> int: ...
+
+    def complete(self, messages: Sequence[dict[str, str]]) -> str: ...
 
 
 class Reranker(Protocol):

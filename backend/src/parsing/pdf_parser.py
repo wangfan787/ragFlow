@@ -5,13 +5,18 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
+from .models import ParseSource, parse_source_from_config
+
 
 class PdfParser:
     """PDF 解析器，基于 pypdf 库提取文本内容。"""
 
-    def parse(self, doc_id: str, parse_config: dict) -> list[dict]:
+    def parse(self, doc_id: str, parse_config: dict | ParseSource) -> list[dict]:
         """解析 PDF 文件，按段落输出结构化 block 列表。"""
-        file_path = Path(parse_config.get("file_path", ""))
+        source = (
+            parse_config if isinstance(parse_config, ParseSource) else parse_source_from_config(parse_config)
+        )
+        file_path = source.file_path or Path("")
         if not file_path.exists():
             raise FileNotFoundError(f"source file missing for doc {doc_id}: {file_path}")
 
@@ -41,6 +46,7 @@ class PdfParser:
                             "start_char": None,
                             "end_char": None,
                             "page_no": page_no,
+                            "accuracy": "unavailable",
                         },
                         "metadata": {},
                     }

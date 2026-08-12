@@ -4,6 +4,8 @@ from __future__ import annotations
 # 导入 Markdown 和 PDF 解析器
 from .markdown_parser_it import MarkdownParserIt  # 使用基于 markdown-it-py 的解析器
 from .pdf_parser import PdfParser
+from .text_parser import TextParser
+from .html_parser import HtmlParser
 
 
 def build_parser(file_type: str):
@@ -14,8 +16,13 @@ def build_parser(file_type: str):
     - pdf: PDF 文件
     """
     normalized = (file_type or "").strip().lower()
-    if normalized == "md":
+    normalized = normalized.lstrip(".")
+    if normalized in {"md", "markdown"}:
         return MarkdownParserIt()
     if normalized == "pdf":
         return PdfParser()
+    if normalized in {"txt", "text"}:
+        return TextParser()
+    if normalized in {"html", "htm"}:
+        return HtmlParser()
     raise ValueError(f"unsupported file_type for parser: {file_type}")

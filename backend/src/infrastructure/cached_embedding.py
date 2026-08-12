@@ -48,6 +48,8 @@ class CachedEmbedding:
         self.batch_size = batch_size
         self.namespace = namespace or embedding_cache_namespace(inner)
         self.backend_name = str(getattr(inner, "backend_name", ""))
+        self.max_input_tokens = getattr(inner, "max_input_tokens", None)
+        self.dimensions = getattr(inner, "dimensions", getattr(inner, "dim", None))
         self._memory: dict[str, EmbeddingVector] = {}
         self._initialize()
 

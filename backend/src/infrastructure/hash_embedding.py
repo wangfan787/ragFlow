@@ -9,9 +9,12 @@ from backend.src.retrieval.vectorizer import tokenize
 
 class HashEmbedding(EmbeddingModel):
     backend_name = "hash"
+    model_name = "hash-v1"
+    max_input_tokens = None
 
     def __init__(self, dim: int = 64) -> None:
         self.dim = dim
+        self.dimensions = dim
 
     def _vector_for_text(self, text: str) -> EmbeddingVector:
         values = [0.0] * self.dim

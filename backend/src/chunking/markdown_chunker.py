@@ -50,6 +50,10 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
+import hashlib
+import json
+
 from backend.src.chunking.block_merge import BlockMergeStrategy
 from backend.src.chunking.chunk_config import ChunkConfig, build_chunk_config
 from backend.src.chunking.models import ChunkMeta, ChunkRecord, validate_chunk_record
@@ -125,7 +129,56 @@ class MarkdownChunker:
             start_char=start_char,
             end_char=end_char,
             page_no=page_no,
+            accuracy=(
+                "exact"
+                if spans and all(s.accuracy == "exact" for s in spans)
+                else "line_only"
+                if any(s.accuracy in {"exact", "line_only"} for s in spans)
+                else "unavailable"
+            ),
         )
+
+    def _child_span(self, item: dict) -> SourceSpan | None:
+        """Project a normalized Parent range back to raw source when possible."""
+        start = item.get("parent_char_start")
+        end = item.get("parent_char_end")
+        if start is None or end is None:
+            return self._merge_span(list(item.get("source_blocks", [])))
+        projected: list[SourceSpan] = []
+        for segment in item.get("parent_segment_map", []):
+            overlap_start = max(int(start), int(segment["parent_start"]))
+            overlap_end = min(int(end), int(segment["parent_end"]))
+            if overlap_start >= overlap_end:
+                continue
+            block_span = coerce_source_span(self._read(segment["block"], "source_span"))
+            if block_span is None:
+                continue
+            raw_start = block_span.start_char
+            raw_end = block_span.end_char
+            accuracy = block_span.accuracy
+            if accuracy == "exact" and raw_start is not None:
+                raw_start = (
+                    raw_start
+                    + int(segment["block_char_start"])
+                    + overlap_start
+                    - int(segment["parent_start"])
+                )
+                raw_end = raw_start + (overlap_end - overlap_start)
+            else:
+                accuracy = "line_only" if accuracy != "unavailable" else "unavailable"
+            projected.append(
+                SourceSpan(
+                    start_line=block_span.start_line,
+                    end_line=block_span.end_line,
+                    start_char=raw_start,
+                    end_char=raw_end,
+                    page_no=block_span.page_no,
+                    accuracy=accuracy,
+                )
+            )
+        if not projected:
+            return self._merge_span(list(item.get("source_blocks", [])))
+        return self._merge_span([{"source_span": span} for span in projected])
 
     def _span_dict(self, span: SourceSpan | None) -> dict | None:
         """将 SourceSpan 对象序列化为 dict（None-safe）。"""
@@ -137,6 +190,7 @@ class MarkdownChunker:
             "start_char": span.start_char,
             "end_char": span.end_char,
             "page_no": span.page_no,
+            "accuracy": span.accuracy,
         }
 
     # ==================================================================
@@ -162,6 +216,9 @@ class MarkdownChunker:
         """
         # ── 配置解析 ──
         config = build_chunk_config(chunk_config)
+        profile_hash = hashlib.sha256(
+            json.dumps(asdict(config), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()[:12]
 
         # ── 阶段一：两阶段切分（父块合并 + 子块拆分）──
         merged = self._merge.merge(parse_blocks, config)
@@ -190,7 +247,7 @@ class MarkdownChunker:
         order = 0
         for item in merged:
             order += 1
-            chunk_id = f"{doc_id}_ck_{order}"
+            chunk_id = f"{doc_id}_v2_{profile_hash}_{order}"
             items_with_id.append((order, item, chunk_id))
             # 父块记入映射表，供子块回填 parent_id
             if item.get("chunk_role") == "parent":
@@ -233,12 +290,16 @@ class MarkdownChunker:
 
             # ── chunk 基本信息 ──
             chunk_doc_id = str(self._read(first, "doc_id", doc_id))
-            text = str(item.get("text", "")).strip()
-            if not text:
+            text = str(item.get("text", ""))
+            if not text.strip():
                 continue
 
             # ── 合并 source_span ──
-            source_span = self._merge_span(source_blocks)
+            source_span = (
+                self._child_span(item)
+                if item.get("chunk_role") == "child"
+                else self._merge_span(source_blocks)
+            )
 
             # ── chunk_role 和父子 ID ──
             chunk_role = str(item.get("chunk_role", "parent"))
@@ -281,6 +342,9 @@ class MarkdownChunker:
                 chunk_role=chunk_role,
                 parent_id=parent_id,
                 child_ids=child_ids,
+                retrieval_eligible=chunk_role == "child",
+                parent_char_start=item.get("parent_char_start"),
+                parent_char_end=item.get("parent_char_end"),
             )
 
             # ── 构建 ChunkRecord 并校验 ──
@@ -308,6 +372,13 @@ class MarkdownChunker:
                     "parent_id": record.meta.parent_id,
                     "child_ids": list(record.meta.child_ids),
                     "chunk_order": record.meta.chunk_order,
+                    "chunk_profile_version": "parent-child-v2",
+                    "chunk_profile_hash": profile_hash,
+                    "retrieval_eligible": record.meta.retrieval_eligible,
+                    "source_span": self._span_dict(record.meta.source_span),
+                    "source_block_ids": list(record.meta.source_block_ids),
+                    "parent_char_start": record.meta.parent_char_start,
+                    "parent_char_end": record.meta.parent_char_end,
                     # ---- 完整元数据（序列化为嵌套 dict）----
                     "meta": {
                         "field_path": record.meta.field_path,
@@ -322,6 +393,9 @@ class MarkdownChunker:
                         "chunk_role": record.meta.chunk_role,
                         "parent_id": record.meta.parent_id,
                         "child_ids": list(record.meta.child_ids),
+                        "retrieval_eligible": record.meta.retrieval_eligible,
+                        "parent_char_start": record.meta.parent_char_start,
+                        "parent_char_end": record.meta.parent_char_end,
                     },
                 }
             )

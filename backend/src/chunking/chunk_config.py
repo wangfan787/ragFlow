@@ -32,6 +32,10 @@ class ChunkConfig:
     child_target_tokens: int = 128    # 子块目标大小（软上限）
     child_max_tokens: int = 192       # 子块最大大小（硬上限）
 
+    # Final embedding request budget. Optional retrieval features must fit in
+    # the remaining space and may never displace Child content.
+    embedding_input_budget: int = 3072
+
     # --- 行为开关 ---
     align_to_boundary: bool = True    # 是否对齐语义边界（heading/段落）
     preserve_code_block: bool = True  # 代码块不拆散，整体保留
@@ -47,12 +51,19 @@ def build_chunk_config(raw: ChunkConfig | dict | None = None) -> ChunkConfig:
     - dict       -> 校验字段白名单后构造 ChunkConfig
     """
     if not raw:
-        return ChunkConfig()
-    if isinstance(raw, ChunkConfig):
-        return raw
-    # 字段白名单校验：拒绝未知参数
-    fields = ChunkConfig.__dataclass_fields__
-    unknown = sorted(set(raw) - set(fields))
-    if unknown:
-        raise ValueError(f"unsupported chunk_config fields: {', '.join(unknown)}")
-    return ChunkConfig(**raw)
+        config = ChunkConfig()
+    elif isinstance(raw, ChunkConfig):
+        config = raw
+    else:
+        fields = ChunkConfig.__dataclass_fields__
+        unknown = sorted(set(raw) - set(fields))
+        if unknown:
+            raise ValueError(f"unsupported chunk_config fields: {', '.join(unknown)}")
+        config = ChunkConfig(**raw)
+    if not (0 < config.child_target_tokens <= config.child_max_tokens):
+        raise ValueError("child token budgets must satisfy 0 < target <= max")
+    if not (0 < config.parent_target_tokens <= config.parent_max_tokens):
+        raise ValueError("parent token budgets must satisfy 0 < target <= max")
+    if config.child_max_tokens > config.embedding_input_budget:
+        raise ValueError("child_max_tokens cannot exceed embedding_input_budget")
+    return config

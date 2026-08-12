@@ -4,6 +4,8 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
+from backend.src.chunking.token_counter import SimpleTokenCounter
+
 logger = logging.getLogger("mvp_api")
 
 
@@ -31,12 +33,30 @@ class OpenAIChat:
         max_tokens: int,
         temperature: float = 0.2,
         extra_body: dict | None = None,
+        context_limit_tokens: int = 32768,
     ) -> None:
         self.client = client
         self.model = model
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.extra_body = extra_body or {}
+        self.context_limit_tokens = context_limit_tokens
+        self.completion_reserve_tokens = max_tokens
+        self._token_counter = SimpleTokenCounter()
+
+    @property
+    def model_name(self) -> str:
+        return self.model
+
+    def count_tokens(self, messages: Sequence[dict[str, str]]) -> int:
+        # Conservative OpenAI-compatible envelope estimate. The safety budget
+        # configured by QA absorbs provider-specific serialization variance.
+        return 2 + sum(
+            4
+            + self._token_counter.count(str(message.get("role", "")))
+            + self._token_counter.count(str(message.get("content", "")))
+            for message in messages
+        )
 
     def complete(self, messages: Sequence[dict[str, str]]) -> str:
         request: dict[str, Any] = {

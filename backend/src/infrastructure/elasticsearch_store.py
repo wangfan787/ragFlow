@@ -59,10 +59,21 @@ class ElasticsearchStore:
             "parent_id": {"type": "keyword"},
             "child_ids": {"type": "keyword"},
             "chunk_order": {"type": "integer"},
+            "retrieval_eligible": {"type": "boolean"},
+            "source_span": {"type": "object", "enabled": False},
+            "source_block_ids": {"type": "keyword"},
+            "parent_char_start": {"type": "integer"},
+            "parent_char_end": {"type": "integer"},
             "embedding_backend": {"type": "keyword"},
             "embedding_model": {"type": "keyword"},
             "embedding_dim": {"type": "integer"},
             "retrieval_metadata_trace": {"type": "object", "enabled": False},
+            "embedding_profile": {"type": "keyword"},
+            "embedding_input_tokens": {"type": "integer"},
+            "embedding_removed_features": {"type": "keyword"},
+            "chunk_profile_version": {"type": "keyword"},
+            "chunk_profile_hash": {"type": "keyword"},
+            "index_schema_version": {"type": "keyword"},
         }
 
     def _ensure_index(self, dimension: int) -> str:
@@ -112,29 +123,45 @@ class ElasticsearchStore:
             refresh=True,
         )
 
+    def delete_stale_by_doc_id(self, doc_id: str, keep_ids: list[str]) -> None:
+        if not keep_ids or not self.client.indices.exists(index=self.index_name):
+            return
+        self.client.delete_by_query(
+            index=self.index_name,
+            query={
+                "bool": {
+                    "filter": [{"term": {"doc_id": doc_id}}],
+                    "must_not": [{"ids": {"values": keep_ids}}],
+                }
+            },
+            conflicts="proceed",
+            refresh=True,
+        )
+
     def upsert(self, records: list[VectorRecord]) -> None:
         if not records:
             return
-        dimensions = {len(record.vector) for record in records}
+        dimensions = {len(record.vector) for record in records if record.vector}
         if len(dimensions) != 1:
-            raise ValueError("a bulk request cannot mix embedding dimensions")
+            raise ValueError("a bulk request must contain exactly one Child embedding dimension")
         vector_field = self._ensure_index(dimensions.pop())
 
         operations = []
         for record in records:
             operations.append({"index": {"_index": self.index_name, "_id": record.id}})
-            operations.append(
-                {
-                    **record.payload,
-                    "chunk_id": record.id,
-                    "doc_id": record.doc_id,
-                    "embedding_dim": len(record.vector),
-                    vector_field: record.vector,
-                }
-            )
+            source = {**record.payload, "chunk_id": record.id, "doc_id": record.doc_id}
+            if record.vector:
+                source["embedding_dim"] = len(record.vector)
+                source[vector_field] = record.vector
+            operations.append(source)
         response = self.client.bulk(operations=operations, refresh="wait_for")
         if response.get("errors"):
-            raise RuntimeError("Elasticsearch bulk indexing failed")
+            failures = [
+                item
+                for item in response.get("items", [])
+                if int(next(iter(item.values())).get("status", 500)) >= 300
+            ]
+            raise RuntimeError(f"Elasticsearch bulk indexing failed items={failures[:3]}")
 
     def vector_search(
         self,
@@ -148,7 +175,8 @@ class ElasticsearchStore:
             "k": top_k,
             "num_candidates": max(100, top_k * 10),
         }
-        if filter_clauses := self._filters(filters):
+        system_filters = {**(filters or {}), "retrieval_eligible": True}
+        if filter_clauses := self._filters(system_filters):
             knn["filter"] = filter_clauses
         response = self.client.search(
             index=self.index_name,
@@ -185,7 +213,8 @@ class ElasticsearchStore:
                 }
             ]
         }
-        if filter_clauses := self._filters(filters):
+        system_filters = {**(filters or {}), "retrieval_eligible": True}
+        if filter_clauses := self._filters(system_filters):
             bool_query["filter"] = filter_clauses
         response = self.client.search(
             index=self.index_name,
@@ -230,7 +259,7 @@ class ElasticsearchStore:
                 VectorRecord(
                     id=str(payload.get("chunk_id") or item["_id"]),
                     doc_id=str(payload.get("doc_id", "")),
-                    vector=[],
+                    vector=None,
                     payload=payload,
                 )
             )

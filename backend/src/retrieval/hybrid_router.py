@@ -46,25 +46,20 @@ class HybridRouter:
         self,
         eligible_rows: list[dict],
     ) -> tuple[list[dict], dict]:
-        """small-to-big + 父子去重。
-
-        1. 对每个命中的 child chunk，用 parent_id 反查父块全文，把 content 展开成父块内容
-           （子块负责精准召回，父块提供完整上下文给 QA）。
-        2. 同一 family（父+子）若都命中，只保留分数高的那个，避免 QA 看到重复证据。
-
-        返回 (展开去重后的 rows, trace 信息)。
-        """
+        """Aggregate hit Children by Parent using RAGFlow's mean semantics."""
         if not eligible_rows:
             return eligible_rows, {"expanded": 0, "deduped": 0, "parent_lookup_failed": 0}
 
-        # 收集需要反查的 parent_id（仅 child 才有 parent_id）
-        child_parent_ids = {
-            str(row.get("parent_id"))
+        # Parent records are context-only. Drop any legacy Parent candidate
+        # defensively even if a custom store ignored the mandatory filter.
+        children = [
+            row
             for row in eligible_rows
-            if str(row.get("chunk_role", "parent")) == "child" and row.get("parent_id")
-        }
+            if str(row.get("chunk_role", "child")) == "child"
+            and bool(row.get("retrieval_eligible", True))
+        ]
+        child_parent_ids = {str(row["parent_id"]) for row in children if row.get("parent_id")}
         parent_payloads: dict[str, dict] = {}
-        failed_lookups = 0
         if child_parent_ids:
             parent_rows = self.embedding_retriever.query_by_ids(list(child_parent_ids))
             for parent_record in parent_rows:
@@ -72,70 +67,91 @@ class HybridRouter:
                 pid = str(payload.get("chunk_id") or parent_record.id or "")
                 if pid:
                     parent_payloads[pid] = payload
-            failed_lookups = len(child_parent_ids) - len(parent_payloads)
-
-        # family key：child 用 parent_id 归族；parent（无 parent_id）用自身 chunk_id 归族
-        def _family_key(row: dict) -> str:
-            role = str(row.get("chunk_role", "parent"))
-            if role == "child" and row.get("parent_id"):
-                return f"family::{row['parent_id']}"
-            return f"family::{row.get('chunk_id')}"
-
+        failed_lookups = len(child_parent_ids) - len(parent_payloads)
         families: dict[str, list[dict]] = {}
-        for row in eligible_rows:
-            families.setdefault(_family_key(row), []).append(row)
+        for row in children:
+            family_id = str(row.get("parent_id") or row.get("chunk_id"))
+            families.setdefault(family_id, []).append(row)
 
         expanded_rows: list[dict] = []
         expanded_count = 0
-        deduped_count = 0
-        for members in families.values():
-            # 取 family 内最高分作为代表（同分时优先 parent，因为它上下文更完整）
-            def _sort_key(r: dict):
-                return (
-                    float(r.get("score", r.get("fused_score", 0.0))),
-                    1 if str(r.get("chunk_role", "parent")) == "parent" else 0,
+        for family_id, members in families.items():
+            members = sorted(
+                members,
+                key=lambda row: float(row.get("score", row.get("fused_score", 0.0))),
+                reverse=True,
+            )
+            primary = dict(members[0])
+
+            def mean(field: str) -> float:
+                return sum(float(row.get(field, 0.0) or 0.0) for row in members) / len(members)
+
+            matched_children = [
+                {
+                    "chunk_id": str(row["chunk_id"]),
+                    "score": float(row.get("score", row.get("fused_score", 0.0))),
+                    "vector_score": float(row.get("vector_score", 0.0)),
+                    "keyword_score": float(row.get("keyword_score", 0.0)),
+                    "fused_score": float(row.get("fused_score", 0.0)),
+                    "rerank_score": row.get("rerank_score"),
+                    "snippet": str(row.get("content", "")),
+                    "source_span": dict(row.get("source_span") or {}),
+                    "source_block_ids": list(row.get("source_block_ids", []) or []),
+                    "parent_char_start": row.get("parent_char_start"),
+                    "parent_char_end": row.get("parent_char_end"),
+                }
+                for row in members
+            ]
+            family_score = mean("score")
+            result = {
+                **primary,
+                "score": family_score,
+                "vector_score": mean("vector_score"),
+                "keyword_score": mean("keyword_score"),
+                "fused_score": mean("fused_score"),
+                "rerank_score": (
+                    mean("rerank_score")
+                    if any(row.get("rerank_score") is not None for row in members)
+                    else None
+                ),
+                "matched_child_id": str(primary["chunk_id"]),
+                "primary_matched_child_id": str(primary["chunk_id"]),
+                "matched_children": matched_children,
+                "family_contributors": matched_children,
+                "family_member_count": len(members),
+            }
+            parent_payload = parent_payloads.get(family_id)
+            if parent_payload and str(parent_payload.get("content", "")):
+                result.update(
+                    {
+                        "chunk_id": str(parent_payload.get("chunk_id") or family_id),
+                        "doc_id": str(parent_payload.get("doc_id") or primary["doc_id"]),
+                        "content": str(parent_payload["content"]),
+                        "doc_name": str(parent_payload.get("doc_name") or primary.get("doc_name", "")),
+                        "section_path": list(parent_payload.get("section_path", [])),
+                        "page_no": parent_payload.get("page_no"),
+                        "chunk_role": "parent",
+                        "retrieval_eligible": False,
+                        "parent_id": None,
+                        "child_ids": list(parent_payload.get("child_ids", []) or []),
+                        "chunk_order": parent_payload.get("chunk_order"),
+                        "source_span": dict(parent_payload.get("source_span") or {}),
+                        "source_block_ids": list(parent_payload.get("source_block_ids", []) or []),
+                        "context_source_block_ids": list(
+                            parent_payload.get("source_block_ids", []) or []
+                        ),
+                        "context_span": dict(parent_payload.get("source_span") or {}),
+                        "parent_char_start": None,
+                        "parent_char_end": None,
+                    }
                 )
+                expanded_count += 1
+            else:
+                # The family mean still uses every hit, but only the primary
+                # Child text is available to the prompt when Parent lookup fails.
+                result["matched_children"] = [matched_children[0]]
+            expanded_rows.append(result)
 
-            members.sort(key=_sort_key, reverse=True)
-            best = dict(members[0])
-            if len(members) > 1:
-                deduped_count += len(members) - 1
-
-            # 若代表是 child 且能反查到父块，展开 content 为父块全文
-            if str(best.get("chunk_role", "parent")) == "child" and best.get("parent_id"):
-                parent_payload = parent_payloads.get(str(best["parent_id"]))
-                if parent_payload:
-                    parent_content = str(parent_payload.get("content", ""))
-                    if parent_content:
-                        matched_child_id = str(best["chunk_id"])
-                        best.update(
-                            {
-                                "chunk_id": str(
-                                    parent_payload.get("chunk_id") or best["parent_id"]
-                                ),
-                                "doc_id": str(parent_payload.get("doc_id") or best["doc_id"]),
-                                "content": parent_content,
-                                "doc_name": str(
-                                    parent_payload.get("doc_name") or best.get("doc_name", "")
-                                ),
-                                "section_path": list(parent_payload.get("section_path", [])),
-                                "page_no": parent_payload.get("page_no"),
-                                "chunk_role": "parent",
-                                "parent_id": None,
-                                "child_ids": list(parent_payload.get("child_ids", []) or []),
-                                "chunk_order": parent_payload.get("chunk_order"),
-                                "matched_child_id": matched_child_id,
-                            }
-                        )
-                        best["_expanded_from_child"] = True
-                        expanded_count += 1
-
-            # 清理内部标记，不进输出
-            best.pop("_expanded_from_child", None)
-            expanded_rows.append(best)
-
-        # 保持原有排序（eligible_rows 已是降序，families 遍历也保持插入顺序）
-        # 但去重后数量变化，重新按 score 降序保证 top_k 切片正确
         expanded_rows.sort(
             key=lambda r: (
                 float(r.get("score", r.get("fused_score", 0.0))),
@@ -145,8 +161,10 @@ class HybridRouter:
         )
         trace = {
             "expanded": expanded_count,
-            "deduped": deduped_count,
+            "deduped": len(children) - len(expanded_rows),
             "parent_lookup_failed": failed_lookups,
+            "legacy_parent_candidates_dropped": len(eligible_rows) - len(children),
+            "family_score": "mean",
         }
         return expanded_rows, trace
 
@@ -232,6 +250,18 @@ class HybridRouter:
                 child_ids=list(item.get("child_ids", []) or []),
                 chunk_order=item.get("chunk_order"),
                 matched_child_id=item.get("matched_child_id"),
+                primary_matched_child_id=item.get("primary_matched_child_id"),
+                matched_children=list(item.get("matched_children", []) or []),
+                family_contributors=list(item.get("family_contributors", []) or []),
+                retrieval_eligible=bool(item.get("retrieval_eligible", False)),
+                source_span=dict(item.get("source_span") or {}),
+                source_block_ids=list(item.get("source_block_ids", []) or []),
+                parent_char_start=item.get("parent_char_start"),
+                parent_char_end=item.get("parent_char_end"),
+                context_span=dict(item.get("context_span") or {}),
+                context_source_block_ids=list(
+                    item.get("context_source_block_ids", []) or []
+                ),
             )
             validate_retrieved_chunk(result)
             results.append(result)
@@ -259,6 +289,7 @@ class HybridRouter:
                     "doc_id": str(item["doc_id"]),
                     "chunk_id": str(item["chunk_id"]),
                     "matched_child_id": item.get("matched_child_id"),
+                    "matched_children": list(item.get("matched_children", []) or []),
                     "doc_name": str(item.get("doc_name", "")),
                     "rank_in_vector": vector_rank.get(key),
                     "rank_in_keyword": keyword_rank.get(key),

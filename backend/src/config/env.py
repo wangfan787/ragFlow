@@ -68,7 +68,8 @@ _CONFIG_PATHS: dict[str, tuple[str, ...]] = {
     "MVP_QA_LLM_API_KEY": ("llm", "qa", "api_key"),
     "MVP_QA_LLM_MODEL": ("llm", "qa", "model"),
     "MVP_QA_LLM_BASE_URL": ("llm", "qa", "base_url"),
-    "MVP_QA_LLM_MAX_TOKENS": ("llm", "qa", "max_tokens"),
+    "MVP_QA_COMPLETION_RESERVE_TOKENS": ("llm", "qa", "completion_reserve_tokens"),
+    "MVP_QA_LLM_CONTEXT_TOKENS": ("llm", "qa", "context_limit_tokens"),
     "MVP_QA_LLM_TEMPERATURE": ("llm", "qa", "temperature"),
     "MVP_QA_LLM_THINKING": ("llm", "qa", "thinking"),
     "MVP_METADATA_LLM_API_KEY": ("llm", "metadata", "api_key"),
@@ -80,7 +81,13 @@ _CONFIG_PATHS: dict[str, tuple[str, ...]] = {
     "MVP_ELASTICSEARCH_INDEX": ("elasticsearch", "index"),
     "MVP_ELASTICSEARCH_TIMEOUT": ("elasticsearch", "timeout"),
     "MVP_QA_CONTEXT_TOP_K": ("qa", "context_top_k"),
-    "MVP_QA_CONTEXT_CHARS_PER_CHUNK": ("qa", "context_chars_per_chunk"),
+    "MVP_QA_PROMPT_SAFETY_TOKENS": ("qa", "prompt_safety_tokens"),
+    "MVP_QA_EVIDENCE_WINDOW_TOKENS": ("qa", "evidence_window_tokens"),
+    "MVP_QUERY_REWRITE_ENABLED": ("qa", "query_rewrite", "enabled"),
+    "MVP_QUERY_REWRITE_MAX_HISTORY_TURNS": ("qa", "query_rewrite", "max_history_turns"),
+    "MVP_QUERY_REWRITE_MAX_HISTORY_TOKENS": ("qa", "query_rewrite", "max_history_tokens"),
+    "MVP_QUERY_REWRITE_PROMPT_SAFETY_TOKENS": ("qa", "query_rewrite", "prompt_safety_tokens"),
+    "MVP_QUERY_REWRITE_MAX_QUERY_TOKENS": ("qa", "query_rewrite", "max_query_tokens"),
 }
 
 

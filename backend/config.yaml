@@ -33,7 +33,10 @@ llm:
     api_key: ""
     model: ""
     base_url: ""
-    max_tokens: 1024
+    # Total model context and completion reserve are different quantities.
+    # Set context_limit_tokens to the verified limit of the configured model.
+    context_limit_tokens: 32768
+    completion_reserve_tokens: 1024
     temperature: 0.2
     thinking: ""
   # Optional: used to generate important_kwd/question_kwd during ingestion.
@@ -54,4 +57,13 @@ elasticsearch:
 
 qa:
   context_top_k: 5
-  context_chars_per_chunk: 2500
+  evidence_window_tokens: 768
+  prompt_safety_tokens: 256
+  query_rewrite:
+    # Rewrite only runs when the request supplies prior user/assistant messages.
+    # It reuses the configured QA model and fails open to the original question.
+    enabled: true
+    max_history_turns: 6
+    max_history_tokens: 2048
+    prompt_safety_tokens: 128
+    max_query_tokens: 256

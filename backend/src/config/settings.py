@@ -153,8 +153,10 @@ class Settings:
         raw = self._get(name)
         if raw is None:
             return default
+        if isinstance(raw, bool):
+            return raw
         
-        raw_lower = raw.lower()
+        raw_lower = str(raw).lower()
         if raw_lower in {"1", "true", "yes", "on"}:
             return True
         if raw_lower in {"0", "false", "no", "off"}:

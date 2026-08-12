@@ -29,6 +29,17 @@ class RetrievedChunk:
     child_ids: list[str] = field(default_factory=list)
     chunk_order: int | None = None
     matched_child_id: str | None = None
+    primary_matched_child_id: str | None = None
+    matched_children: list[dict] = field(default_factory=list)
+    family_contributors: list[dict] = field(default_factory=list)
+    retrieval_eligible: bool = False
+    source_span: dict = field(default_factory=dict)
+    source_block_ids: list[str] = field(default_factory=list)
+    parent_char_start: int | None = None
+    parent_char_end: int | None = None
+    context_span: dict = field(default_factory=dict)
+    prompt_span: dict = field(default_factory=dict)
+    context_source_block_ids: list[str] = field(default_factory=list)
 
 
 def validate_retrieved_chunk(chunk: RetrievedChunk) -> None:

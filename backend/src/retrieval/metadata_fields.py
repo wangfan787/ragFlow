@@ -29,6 +29,13 @@ def retrieval_metadata_fields(source: dict) -> dict:
         "parent_id": source.get("parent_id"),
         "child_ids": list(source.get("child_ids", []) or []),
         "chunk_order": source.get("chunk_order"),
+        "retrieval_eligible": bool(source.get("retrieval_eligible", False)),
+        "source_span": dict(source.get("source_span") or {}),
+        "source_block_ids": as_text_list(source.get("source_block_ids", [])),
+        "parent_char_start": source.get("parent_char_start"),
+        "parent_char_end": source.get("parent_char_end"),
+        "chunk_profile_version": source.get("chunk_profile_version"),
+        "chunk_profile_hash": source.get("chunk_profile_hash"),
     }
 
 
@@ -36,7 +43,10 @@ def retrieved_chunk_payload(chunk) -> dict:
     fields = (
         "chunk_id doc_id content score vector_score keyword_score rerank_score fused_score "
         "section_path page_no doc_name important_kwd question_kwd embedding_backend "
-        "embedding_model embedding_dim chunk_role parent_id child_ids chunk_order matched_child_id"
+        "embedding_model embedding_dim chunk_role parent_id child_ids chunk_order matched_child_id "
+        "retrieval_eligible source_span source_block_ids parent_char_start parent_char_end "
+        "matched_children family_contributors primary_matched_child_id context_span prompt_span "
+        "context_source_block_ids"
     ).split()
     return {field: getattr(chunk, field) for field in fields}
 

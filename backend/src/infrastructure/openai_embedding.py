@@ -37,6 +37,7 @@ class OpenAIEmbedding(EmbeddingModel):
             self.batch_size = min(self.batch_size, max(1, max_batch_size))
         self.max_input_tokens = max_input_tokens if max_input_tokens and max_input_tokens > 0 else None
         self._token_counter = SimpleTokenCounter()
+        self.truncated_input_count = 0
 
     @property
     def model_name(self) -> str:
@@ -60,6 +61,7 @@ class OpenAIEmbedding(EmbeddingModel):
             safe_texts.append(text)
 
         if truncated:
+            self.truncated_input_count += truncated
             logger.warning(
                 "embedding.input_truncated backend=%s model=%s count=%d max_tokens_before=%d limit=%d",
                 self.backend_name,

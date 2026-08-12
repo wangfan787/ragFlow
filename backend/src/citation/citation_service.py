@@ -37,6 +37,15 @@ class CitationService:
                 snippet=snippet,
                 page_no=chunk.page_no,
                 section_path=chunk.section_path,
+                context_chunk_id=chunk.chunk_id,
+                context_snippet=snippet,
+                context_span=dict(chunk.context_span),
+                prompt_span=dict(chunk.prompt_span),
+                matched_children=list(chunk.matched_children),
+                primary_matched_child_id=(
+                    chunk.primary_matched_child_id or chunk.matched_child_id
+                ),
+                source_span=dict(chunk.source_span),
             )
             validate_citation(citation)
             citations.append(citation)

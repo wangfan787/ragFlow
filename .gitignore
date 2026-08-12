@@ -19,11 +19,9 @@ htmlcov/
 .vscode/
 .DS_Store
 
-# Downloaded T2Retrieval data and generated benchmark artifacts.
-dataset/T2Retrieval/*.parquet
-dataset/T2Retrieval/*_preview.csv
-dataset/T2Retrieval/cache/
-dataset/T2Retrieval/embeddings/
+# Downloaded datasets and generated benchmark artifacts. Keep dataset scripts
+# and dependency manifests, but never commit the local T2Retrieval contents.
+dataset/T2Retrieval/
 
 # Generated local test reports and editor scratch files.
 backend/tests/tempCodeRunnerFile.py

@@ -12,7 +12,7 @@ from backend.src.chunking.chunk_config import ChunkConfig, build_chunk_config
 from backend.src.chunking.markdown_chunker import MarkdownChunker
 from backend.src.indexing.embedding_indexer import EmbeddingIndexer
 from backend.src.indexing.retrieval_metadata import RetrievalMetadataGenerator
-from backend.src.parsing.models import ParseResultBlock, coerce_source_span
+from backend.src.parsing.models import ParseResultBlock, coerce_source_span, parse_source_from_config
 from backend.src.parsing.parser_factory import build_parser
 
 logger = logging.getLogger("mvp_api")
@@ -21,14 +21,20 @@ logger = logging.getLogger("mvp_api")
 class IngestionPipeline:
     """MVP full-chain parsing/chunking pipeline (orchestration only)."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        embedding_indexer: EmbeddingIndexer | None = None,
+        metadata_generator: RetrievalMetadataGenerator | None = None,
+    ) -> None:
         self.chunker = MarkdownChunker()
-        self.embedding_indexer = EmbeddingIndexer()
-        self.metadata_generator = RetrievalMetadataGenerator.from_env()
+        self.embedding_indexer = embedding_indexer or EmbeddingIndexer()
+        self.metadata_generator = metadata_generator or RetrievalMetadataGenerator.from_env()
 
     def parse_stage(self, doc_id: str, parse_config: dict) -> list[ParseResultBlock]:
-        parser = build_parser(parse_config.get("file_type", ""))
-        records = parser.parse(doc_id, parse_config)
+        source = parse_source_from_config(parse_config)
+        parser = build_parser(source.source_type)
+        records = parser.parse(doc_id, source)
         return [
             ParseResultBlock(
                 text=item["text"],
@@ -63,6 +69,7 @@ class IngestionPipeline:
                     "page_no": block.page_no,
                     "order": block.order,
                     "source_span": block.source_span,
+                    "metadata": dict(block.metadata),
                 }
             )
 
@@ -71,13 +78,25 @@ class IngestionPipeline:
             row["doc_id"] = doc_id
             row["doc_name"] = doc_name
             row.setdefault("content", row.get("text", ""))
+            row["embedding_input_budget"] = config.embedding_input_budget
         return rows
 
     def metadata_stage(self, doc_name: str, chunks: list[dict]) -> list[dict]:
         rows: list[dict] = []
         source_counts: dict[str, int] = {}
         for chunk in chunks:
-            metadata = self.metadata_generator.generate(doc_name, chunk)
+            metadata = (
+                self.metadata_generator.generate(doc_name, chunk)
+                if chunk.get("retrieval_eligible")
+                else {
+                    "important_kwd": [],
+                    "important_tks": [],
+                    "question_kwd": [],
+                    "question_tks": [],
+                    "title_tks": [],
+                    "retrieval_metadata_trace": {"metadata_source": "context_parent_skipped"},
+                }
+            )
             source = str(
                 metadata.get("retrieval_metadata_trace", {}).get(
                     "metadata_source",

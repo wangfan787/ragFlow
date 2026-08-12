@@ -51,6 +51,9 @@ class ChunkMeta:
     chunk_role: str = "parent"
     parent_id: str | None = None
     child_ids: list[str] = field(default_factory=list)
+    retrieval_eligible: bool = False
+    parent_char_start: int | None = None
+    parent_char_end: int | None = None
 
 
 @dataclass
@@ -76,6 +79,10 @@ def validate_chunk_record(record: ChunkRecord) -> None:
         raise ValueError("doc_id cannot be empty")
     if not record.text.strip():
         raise ValueError("chunk text cannot be empty")
+    if record.meta.chunk_role == "parent" and record.meta.retrieval_eligible:
+        raise ValueError("parent chunks cannot be retrieval eligible")
+    if record.meta.chunk_role == "child" and not record.meta.retrieval_eligible:
+        raise ValueError("child chunks must be retrieval eligible")
 
 
 # ============================================================================

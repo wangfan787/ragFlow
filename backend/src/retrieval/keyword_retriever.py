@@ -17,7 +17,11 @@ class KeywordRetriever:
         config = retrieval_config or {}
         top_k = int(config.get("top_k", 10))
         filters = config.get("filters") if isinstance(config.get("filters"), dict) else None
-        hits = self._store.keyword_search(query, top_k=top_k, filters=filters)
+        hits = self._store.keyword_search(
+            query,
+            top_k=top_k,
+            filters={**(filters or {}), "retrieval_eligible": True},
+        )
 
         rows = []
         for hit in hits:

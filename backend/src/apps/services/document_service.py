@@ -7,11 +7,13 @@ from backend.src.apps.services.ingestion_pipeline import IngestionPipeline
 from backend.src.apps.services.state_store import get_document, list_documents, upsert_document
 from backend.src.chunking.chunk_config import ChunkConfig
 
-_ALLOWED_EXT = {"pdf", "md"}
+_ALLOWED_EXT = {"pdf", "md", "txt", "html", "htm"}
 _CONTENT_TYPE_TO_EXT = {
     "application/pdf": "pdf",
     "text/markdown": "md",
     "text/x-markdown": "md",
+    "text/plain": "txt",
+    "text/html": "html",
 }
 
 

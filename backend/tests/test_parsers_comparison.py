@@ -14,7 +14,7 @@ from backend.src.parsing.markdown_parser_it import MarkdownParserIt
 TEST_MD = PROJECT_ROOT / "backend" / "tests" / "parsing_test" / "sample_walkthrough.md"
 DOC_ID = "test_doc"
 
-def test_parser(parser_class, name: str):
+def compare_parser(parser_class, name: str):
     """测试指定的解析器。"""
     print(f"\n{'=' * 80}")
     print(f"测试解析器: {name}")
@@ -65,10 +65,10 @@ def test_parser(parser_class, name: str):
 
 if __name__ == "__main__":
     # 测试旧解析器
-    old_blocks = test_parser(MarkdownParser, "旧解析器 (markdown_parser.py - 手写正则)")
+    old_blocks = compare_parser(MarkdownParser, "旧解析器 (markdown_parser.py - 手写正则)")
 
     # 测试新解析器
-    new_blocks = test_parser(MarkdownParserIt, "新解析器 (markdown_parser_it.py - markdown-it-py)")
+    new_blocks = compare_parser(MarkdownParserIt, "新解析器 (markdown_parser_it.py - markdown-it-py)")
 
     # 对比结果
     print(f"\n{'=' * 80}")

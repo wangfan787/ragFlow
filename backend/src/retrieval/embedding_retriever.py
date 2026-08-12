@@ -30,6 +30,7 @@ class EmbeddingRetriever:
             "embedding_backend": getattr(embedding, "backend_name", ""),
             "embedding_model": getattr(embedding, "model_name", ""),
             "embedding_dim": len(query_vector),
+            "retrieval_eligible": True,
         }
         rows = self._store.vector_search(
             query_vector,

@@ -20,13 +20,13 @@ if str(ROOT) not in sys.path:
 
 from backend.src.apps.services.benchmark_adapter import ProductionRagAdapter
 from backend.src.config.settings import settings
-from backend.src.infrastructure.embedding_factory import build_embedding_model
+from backend.src.infrastructure.models import build_embeddings
 
 LOGGER = logging.getLogger("t2retrieval_embedding_v2")
 DATASET_DIR = ROOT / "dataset" / "T2Retrieval"
 OUTPUT_DIR = DATASET_DIR / "embeddings-v2"
 SCHEMA_VERSION = "t2-production-rag-v2"
-ADAPTER_ALGORITHM_VERSION = "production-adapter-v2.2"
+ADAPTER_ALGORITHM_VERSION = "production-adapter-v2.3-child-body"
 
 
 def _read_table(name: str):
@@ -49,7 +49,7 @@ def _profile_hash(adapter: ProductionRagAdapter) -> str:
     raw = json.dumps(
         {
             "chunk": asdict(adapter.chunk_config),
-            "embedding": asdict(adapter.text_builder.profile),
+            "embedding": adapter.text_builder.profile,
             "algorithm_version": ADAPTER_ALGORITHM_VERSION,
         },
         sort_keys=True,
@@ -371,8 +371,8 @@ def _embed_manifest(name: str, model, manifest_path: Path, prepared: dict, batch
         "shape": [total, dimension],
         "dtype": "float32",
         "dimension": dimension,
-        "model": model.model_name,
-        "backend": model.backend_name,
+        "model": model.model,
+        "backend": settings.text("MVP_EMBEDDING_BACKEND", "glm"),
         "mapping_file": manifest_path.name,
         "mapping_bytes": int(prepared["mapping_bytes"]),
         "mapping_sha256": str(prepared["mapping_sha256"]),
@@ -446,7 +446,7 @@ def _embed_manifest(name: str, model, manifest_path: Path, prepared: dict, batch
         metadata_path.unlink(missing_ok=True)
     _atomic_json(pending_metadata_path, {**contract, "complete": False})
     for row_numbers, texts in _manifest_batches(manifest_path, start, batch_size):
-        matrix = np.asarray(model.encode(texts), dtype="float32")
+        matrix = np.asarray(model.embed_documents(texts), dtype="float32")
         expected = (len(texts), dimension)
         if matrix.shape != expected:
             raise RuntimeError(f"embedding shape mismatch: {matrix.shape} != {expected}")
@@ -489,7 +489,7 @@ def main() -> None:
         parser.error("--batch-size must be positive")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     adapter = ProductionRagAdapter()
-    model = None if args.prepare_only else build_embedding_model()
+    model = None if args.prepare_only else build_embeddings()
     batch_size = args.batch_size or settings.integer("MVP_EMBEDDING_BATCH_SIZE", 16, positive=True)
     splits = ("corpus", "queries") if args.split == "both" else (args.split,)
     for split in splits:

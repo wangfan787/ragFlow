@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DATASET_DIR = ROOT / "dataset" / "T2Retrieval"
 ARTIFACT_DIR = DATASET_DIR / "embeddings-v2"
 SCHEMA_VERSION = "t2-production-rag-v2"
-ADAPTER_ALGORITHM_VERSION = "production-adapter-v2.2"
+ADAPTER_ALGORITHM_VERSION = "production-adapter-v2.3-child-body"
 
 
 def _sha256_file(path: Path) -> str:

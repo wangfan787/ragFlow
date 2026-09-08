@@ -3,14 +3,15 @@ from __future__ import annotations
 import logging
 
 from backend.src.config.retrieval_config import RetrievalConfig, build_retrieval_config
-from backend.src.contracts import EmbeddingModel, SearchStore
+from langchain_core.embeddings import Embeddings
+
 from backend.src.infrastructure.cross_encoder_reranker import CrossEncoderReranker
 from backend.src.infrastructure.elasticsearch_store import ElasticsearchStore
 from backend.src.infrastructure.rule_reranker import RuleReranker
 from backend.src.retrieval.embedding_retriever import EmbeddingRetriever
 from backend.src.retrieval.hybrid_fusion import HybridFusion
 from backend.src.retrieval.keyword_retriever import KeywordRetriever
-from backend.src.retrieval.models import RetrievedChunk, validate_retrieved_chunk
+from langchain_core.documents import Document
 from backend.src.retrieval.vectorizer import query_terms
 
 logger = logging.getLogger("mvp_api")
@@ -21,8 +22,8 @@ class HybridRouter:
 
     def __init__(
         self,
-        store: SearchStore | None = None,
-        embedding_model: EmbeddingModel | None = None,
+        store: ElasticsearchStore | None = None,
+        embedding_model: Embeddings | None = None,
     ) -> None:
         shared_store = store or ElasticsearchStore()
         self.embedding_retriever = EmbeddingRetriever(
@@ -63,8 +64,8 @@ class HybridRouter:
         if child_parent_ids:
             parent_rows = self.embedding_retriever.query_by_ids(list(child_parent_ids))
             for parent_record in parent_rows:
-                payload = dict(parent_record.payload)
-                pid = str(payload.get("chunk_id") or parent_record.id or "")
+                payload = {**parent_record.metadata, "content": parent_record.page_content}
+                pid = str(payload.get("chunk_id") or parent_record.metadata["chunk_id"] or "")
                 if pid:
                     parent_payloads[pid] = payload
         failed_lookups = len(child_parent_ids) - len(parent_payloads)
@@ -172,7 +173,7 @@ class HybridRouter:
         self,
         query: str,
         retrieval_config: RetrievalConfig | dict | None = None,
-    ) -> list[RetrievedChunk]:
+    ) -> list[Document]:
         config = build_retrieval_config(retrieval_config)
 
         vector_rows = self.embedding_retriever.retrieve(
@@ -218,52 +219,28 @@ class HybridRouter:
             if float(item.get("score", item.get("fused_score", 0.0))) >= config.similarity_threshold
         ]
 
-        # small-to-big + 父子去重：子块召回后展开为父块全文，同 family 只保留最高分。
+        # small-to-big + 父子去重：子块召回后展开为父块全文，同 family 对贡献子块取均分。
         eligible_rows, expand_trace = self._expand_parent_context(eligible_rows)
 
-        results: list[RetrievedChunk] = []
+        results: list[Document] = []
         for item in eligible_rows[: config.top_k]:
             score = float(item.get("score", item.get("fused_score", 0.0)))
             fused_score = float(item.get("fused_score", score))
             rerank_score = item.get("rerank_score")
-            result = RetrievedChunk(
-                chunk_id=str(item["chunk_id"]),
-                doc_id=str(item["doc_id"]),
-                content=str(item.get("content", "")),
-                score=score,
+            metadata = {key: value for key, value in item.items() if key != "content"}
+            metadata.update(
+                score=score, fused_score=fused_score,
                 vector_score=float(item.get("vector_score", 0.0)),
                 keyword_score=float(item.get("keyword_score", 0.0)),
-                fused_score=fused_score,
                 rerank_score=float(rerank_score) if rerank_score is not None else None,
-                section_path=list(item.get("section_path", [])),
-                page_no=item.get("page_no"),
-                doc_name=str(item.get("doc_name", "")),
-                important_kwd=list(item.get("important_kwd", [])),
-                question_kwd=list(item.get("question_kwd", [])),
-                embedding_backend=str(item.get("embedding_backend", "")),
-                embedding_model=str(item.get("embedding_model", "")),
-                embedding_dim=(
-                    int(item["embedding_dim"]) if item.get("embedding_dim") is not None else None
-                ),
-                chunk_role=str(item.get("chunk_role", "parent")),
-                parent_id=item.get("parent_id"),
-                child_ids=list(item.get("child_ids", []) or []),
-                chunk_order=item.get("chunk_order"),
-                matched_child_id=item.get("matched_child_id"),
-                primary_matched_child_id=item.get("primary_matched_child_id"),
-                matched_children=list(item.get("matched_children", []) or []),
-                family_contributors=list(item.get("family_contributors", []) or []),
-                retrieval_eligible=bool(item.get("retrieval_eligible", False)),
-                source_span=dict(item.get("source_span") or {}),
-                source_block_ids=list(item.get("source_block_ids", []) or []),
-                parent_char_start=item.get("parent_char_start"),
-                parent_char_end=item.get("parent_char_end"),
-                context_span=dict(item.get("context_span") or {}),
-                context_source_block_ids=list(
-                    item.get("context_source_block_ids", []) or []
-                ),
             )
-            validate_retrieved_chunk(result)
+            if not metadata.get("doc_id") or not metadata.get("chunk_id"):
+                raise ValueError("doc_id and chunk_id are required")
+            for field in ("score", "vector_score", "keyword_score", "fused_score", "rerank_score"):
+                value = metadata[field]
+                if value is not None and not 0.0 <= value <= 1.0:
+                    raise ValueError("scores must be between 0 and 1")
+            result = Document(page_content=str(item.get("content", "")), metadata=metadata)
             results.append(result)
 
         vector_rank = {
@@ -320,7 +297,7 @@ class HybridRouter:
             "query_terms": sorted(query_terms(query)),
             "chunk_count": len(results),
             "avg_score": (
-                round(sum(row.score for row in results) / len(results), 4) if results else 0.0
+                round(sum(row.metadata["score"] for row in results) / len(results), 4) if results else 0.0
             ),
             "vector_candidate_count": len(vector_rows),
             "keyword_candidate_count": len(keyword_rows),

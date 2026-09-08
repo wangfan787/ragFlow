@@ -1,15 +1,30 @@
+"""统一工程 token 估算：cl100k_base 不是 GLM 官方 tokenizer。"""
+
 from __future__ import annotations
 
-import os
-import re
+from functools import lru_cache
 from typing import Protocol
 
 import tiktoken
-_API_DIR = os.path.dirname(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-)
-os.environ.setdefault("TIKTOKEN_CACHE_DIR", _API_DIR)
-_encoder = tiktoken.get_encoding("cl100k_base")
+
+
+@lru_cache(maxsize=1)
+def _get_encoder() -> tiktoken.Encoding:
+    # 词表冷缓存时可能下载；延迟到首次计数，应用导入和健康检查不联网。
+    # 保留 tiktoken 自身的缓存目录规则和显式 TIKTOKEN_CACHE_DIR 设置。
+    return tiktoken.get_encoding("cl100k_base")
+
+
+def count_tokens(text: str) -> int:
+    """按原始字符串计数（包含空白），编码失败直接报错，不能伪报为 0。"""
+    if not text:
+        return 0
+    return len(_get_encoder().encode(text, disallowed_special=()))
+
+
+def count_message_tokens(messages: list[dict]) -> int:
+    """估算标准文本消息及消息封装；供应商差异由 QA 安全余量覆盖。"""
+    return 2 + sum(4 + count_tokens(m["role"]) + count_tokens(m["content"]) for m in messages)
 
 
 class TokenCounter(Protocol):
@@ -19,86 +34,24 @@ class TokenCounter(Protocol):
 
 
 class SimpleTokenCounter:
-    """基于 tiktoken cl100k_base 的 token 计数（与 RAGFlow 实现一致）。
-
-    英文按 BPE 子词、中文按词表切分，计数口径与 OpenAI 模型一致，供分块阈值
-    （parent/child target_tokens）使用。
-    """
+    """旧消费者的薄适配；与新 count_tokens 使用同一个计数入口。"""
 
     def count(self, text: str) -> int:
-        if not text or not text.strip():
-            return 0
-
-        try:
-            return len(_encoder.encode(text, disallowed_special=()))
-        except Exception:
-            return 0
-
-
-    def tokens(self, text: str) -> list[str]:
-
-        try:
-            return [
-                _encoder.decode_single_token_bytes(t).decode("utf-8", errors="replace")
-                for t in _encoder.encode(text, disallowed_special=())
-            ]
-        except Exception:
-            return []
+        return count_tokens(text)
 
     def truncate(self, text: str, max_tokens: int) -> str:
-        """按 cl100k_base token 边界截断文本。"""
-        if max_tokens <= 0:
+        """旧接口的截断保护，不作为新入库链路的长文本切片算法。"""
+        if not text or max_tokens <= 0:
             return ""
-        try:
-            token_ids = _encoder.encode(text, disallowed_special=())
-            if len(token_ids) <= max_tokens:
-                return text
-            return _encoder.decode(token_ids[:max_tokens])
-        except Exception as exc:
-            raise RuntimeError("failed to tokenize embedding input") from exc
-
-
-
-# ============================================================================
-# 演示和测试
-# ============================================================================
-if __name__ == "__main__":
-    print("=" * 60)
-    print("Token Counter 演示")
-    print("=" * 60)
-
-    counter = SimpleTokenCounter()
-
-    print("=" * 60)
-
-    # 示例 1: 基本使用
-    print("\n📝 示例 1: 基本使用")
-    print("-" * 40)
-    samples = [
-        ("Hello world", "简单英文"),
-        ("你好世界", "纯中文"),
-        ("machine learning", "英文复合词"),
-        ("", "空字符串"),
-        ("   ", "纯空格"),
-    ]
-
-    for text, desc in samples:
-        count = counter.count(text)
-        print(f"{desc:12s}: '{text}' → {count} tokens")
-
-    # 示例 2: tokens() 方法 - 查看分词结果
-    print("\n🔍 示例 2: tokens() 方法 - 查看分词结果")
-    print("-" * 40)
-    debug_samples = [
-        "Hello world",
-        "machine learning",
-        "你好世界",
-        "The quick brown fox jumps over the lazy dog.",
-    ]
-
-    for text in debug_samples:
-        tokens = counter.tokens(text)
-        print(f"原文: '{text}'")
-        print(f"Token 数: {counter.count(text)}")
-        print(f"分词结果: {tokens}")
-        print()
+        encoder = _get_encoder()
+        token_ids = encoder.encode(text, disallowed_special=())
+        if len(token_ids) <= max_tokens:
+            return text
+        # 一个中文字符可能跨多个 token；忽略不完整 UTF-8 尾部，避免引入 �。
+        end = max_tokens
+        while end > 0:
+            prefix = encoder.decode(token_ids[:end], errors="ignore")
+            if count_tokens(prefix) <= max_tokens:
+                return prefix
+            end -= 1
+        return ""

@@ -5,13 +5,15 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
-from .models import ParseSource, parse_source_from_config
+from langchain_core.documents import Document
+
+from .models import ParseSource, parse_source_from_config, parsed_documents
 
 
 class PdfParser:
     """PDF 解析器，基于 pypdf 库提取文本内容。"""
 
-    def parse(self, doc_id: str, parse_config: dict | ParseSource) -> list[dict]:
+    def parse(self, doc_id: str, parse_config: dict | ParseSource) -> list[Document]:
         """解析 PDF 文件，按段落输出结构化 block 列表。"""
         source = (
             parse_config if isinstance(parse_config, ParseSource) else parse_source_from_config(parse_config)
@@ -54,4 +56,4 @@ class PdfParser:
 
         if not blocks:
             raise ValueError("no parseable content found")
-        return blocks
+        return parsed_documents(blocks, doc_id, source.name)

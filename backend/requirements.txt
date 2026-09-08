@@ -1,0 +1,21 @@
+# 仅在 conda agent / Python 3.10 安装。
+# 当前宿主未找到 agent：这些是候选兼容范围，不是实际运行验证的锁定版本。
+# 验证后只固定本文件列出的直接依赖，不 freeze 整个用户环境。
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+langchain-core>=1.6.2,<2
+langchain-openai>=1.6.0,<2
+markdown-it-py>=3,<5
+tiktoken>=0.7,<1
+PyYAML>=6,<7
+python-dotenv>=1,<2
+python-multipart>=0.0.18,<1
+# 当前 localhost:9200 不可达，按首版规格暂选 8.x；联调前核对服务主版本。
+elasticsearch>=8.12,<9
+pytest>=8,<9
+httpx>=0.27,<1
+
+# 阶段迁移期间的旧路由/解析导入依赖；04/07 清理消费者后删除。
+PyJWT>=2.9,<3
+pypdf>=5,<6
+beautifulsoup4>=4.12,<5

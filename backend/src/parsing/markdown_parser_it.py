@@ -4,7 +4,9 @@ from __future__ import annotations
 from markdown_it import MarkdownIt
 
 from .html_parser import HtmlParser
-from .models import ParseSource, parse_source_from_config
+from langchain_core.documents import Document
+
+from .models import ParseSource, parse_source_from_config, parsed_documents
 
 
 class MarkdownParserIt:
@@ -21,7 +23,7 @@ class MarkdownParserIt:
         """初始化 markdown-it 解析器，启用 GFM 表格支持。"""
         self._md = MarkdownIt().enable("table")
 
-    def parse(self, doc_id: str, parse_config: dict | ParseSource) -> list[dict]:
+    def parse(self, doc_id: str, parse_config: dict | ParseSource) -> list[Document]:
         """解析 Markdown 文件，输出结构化 block 列表。
 
         参数：
@@ -75,13 +77,13 @@ class MarkdownParserIt:
 
         # 如果整个文件都是 frontmatter，直接返回
         if start_idx >= len(lines):
-            return blocks
+            return parsed_documents(blocks, doc_id, source.name)
 
         # 处理剩余内容（跳过 frontmatter 后的部分）
         remaining_text = "\n".join(lines[start_idx:])
         remaining_lines = lines[start_idx:]
         if not remaining_text.strip():
-            return blocks
+            return parsed_documents(blocks, doc_id, source.name)
 
         # 使用 markdown-it 解析剩余内容
         tokens = self._md.parse(remaining_text)
@@ -163,8 +165,8 @@ class MarkdownParserIt:
                     order += 1
                     blocks.append(
                         {
-                            **html_block,
-                            "section_path": [*section_path, *html_block.get("section_path", [])],
+                            **html_block.metadata, "text": html_block.page_content,
+                            "section_path": [*section_path, *html_block.metadata.get("section_path", [])],
                             "order": order,
                             "source_span": {
                                 "start_line": (token.map[0] if token.map else 0) + base_line,
@@ -175,7 +177,7 @@ class MarkdownParserIt:
                                 "accuracy": "line_only",
                             },
                             "metadata": {
-                                **dict(html_block.get("metadata", {})),
+                                **html_block.metadata,
                                 "embedded_in_markdown": True,
                             },
                         }
@@ -361,4 +363,4 @@ class MarkdownParserIt:
             span["accuracy"] = "line_only"
             block["source_span"] = span
 
-        return blocks
+        return parsed_documents(blocks, doc_id, source.name)

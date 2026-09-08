@@ -32,9 +32,8 @@ class ChunkConfig:
     child_target_tokens: int = 128    # 子块目标大小（软上限）
     child_max_tokens: int = 192       # 子块最大大小（硬上限）
 
-    # Final embedding request budget. Optional retrieval features must fit in
-    # the remaining space and may never displace Child content.
-    embedding_input_budget: int = 3072
+    # 嵌入只发送子块正文；UTF-8 字节限制由索引入口另外校验。
+    embedding_input_budget: int = 192
 
     # --- 行为开关 ---
     align_to_boundary: bool = True    # 是否对齐语义边界（heading/段落）

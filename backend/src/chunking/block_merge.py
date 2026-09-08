@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
+from langchain_core.documents import Document
+
 from backend.src.chunking.chunk_config import ChunkConfig
 from backend.src.chunking.token_counter import SimpleTokenCounter
 
@@ -95,17 +97,13 @@ class BlockMergeStrategy:
         self._counter = SimpleTokenCounter()
         self._splitter = OversizedSplitter(self._counter)
 
-    @staticmethod
-    def _read(block, key: str, default=None):
-        return block.get(key, default) if isinstance(block, dict) else getattr(block, key, default)
-
     def _block_type(self, block) -> str:
-        return str(self._read(block, "block_type", "paragraph"))
+        return str(block.metadata.get("block_type", "paragraph"))
 
-    def _atomic_fragments(self, blocks: list, config: ChunkConfig) -> list[dict]:
+    def _atomic_fragments(self, blocks: list[Document], config: ChunkConfig) -> list[dict]:
         atoms: list[dict] = []
         for block in blocks:
-            original = str(self._read(block, "text", ""))
+            original = block.page_content
             # Leading/trailing whitespace normalization is explicit. Offsets
             # retain where the normalized text came from in the block.
             leading = len(original) - len(original.lstrip())
@@ -166,7 +164,7 @@ class BlockMergeStrategy:
             "chunk_role": "parent",
         }
 
-    def _merge_into_parents(self, blocks: list, config: ChunkConfig) -> list[dict]:
+    def _merge_into_parents(self, blocks: list[Document], config: ChunkConfig) -> list[dict]:
         atoms = self._atomic_fragments(blocks, config)
         parents: list[dict] = []
         buffer: list[dict] = []
@@ -242,7 +240,7 @@ class BlockMergeStrategy:
             raise RuntimeError("child chunks do not conserve normalized parent content")
         return children
 
-    def merge(self, blocks: list, config: ChunkConfig) -> list[dict]:
+    def merge(self, blocks: list[Document], config: ChunkConfig) -> list[dict]:
         merged: list[dict] = []
         for parent in self._merge_into_parents(blocks, config):
             merged.append(parent)

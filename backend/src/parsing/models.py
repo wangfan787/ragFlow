@@ -1,28 +1,15 @@
-# 解析阶段的数据结构。
-# SourceSpan 描述文本在原始文档中的位置（行号/字符/页码），
-# 被解析、切分、检索阶段共用，所以定义在最早的 parsing 阶段。
-
+"""解析输入与 Document 输出；来源信息直接放在 metadata 中。"""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
-
-@dataclass
-class SourceSpan:
-    start_line: int | None = None   # 起始行号
-    end_line: int | None = None     # 结束行号
-    start_char: int | None = None   # 起始字符位置
-    end_char: int | None = None     # 结束字符位置
-    page_no: int | None = None      # 页码
-    accuracy: str = "unavailable"  # exact / line_only / unavailable
+from langchain_core.documents import Document
 
 
 @dataclass(frozen=True)
 class ParseSource:
-    """A parser input that may come from a file or in-memory text."""
-
+    """文件或内存文本，统一严格 UTF-8 读取。"""
     source_type: str
     name: str = ""
     file_path: Path | None = None
@@ -38,9 +25,7 @@ class ParseSource:
         try:
             return self.file_path.read_text(encoding="utf-8", errors="strict")
         except UnicodeDecodeError as exc:
-            raise ValueError(
-                f"source is not valid UTF-8; provide an explicitly converted UTF-8 file: {self.file_path}"
-            ) from exc
+            raise ValueError(f"source is not valid UTF-8: {self.file_path}") from exc
 
 
 def parse_source_from_config(parse_config: dict) -> ParseSource:
@@ -54,31 +39,17 @@ def parse_source_from_config(parse_config: dict) -> ParseSource:
     )
 
 
-def coerce_source_span(span) -> SourceSpan | None:
-    # 若已是 SourceSpan 或 None 则直接返回，若为 dict 则转换
-    if span is None or isinstance(span, SourceSpan):
-        return span
-    if isinstance(span, dict):
-        return SourceSpan(
-            start_line=span.get("start_line"),
-            end_line=span.get("end_line"),
-            start_char=span.get("start_char"),
-            end_char=span.get("end_char"),
-            page_no=span.get("page_no"),
-            accuracy=str(span.get("accuracy", "unavailable")),
+def parsed_documents(blocks: list[dict], doc_id: str, name: str) -> list[Document]:
+    """在解析边界封装一次；不把正文同时复制到 metadata。"""
+    return [
+        Document(
+            page_content=block["text"],
+            metadata={
+                **block.get("metadata", {}),
+                **{key: value for key, value in block.items() if key not in {"text", "metadata"}},
+                "doc_id": doc_id,
+                "doc_name": name,
+            },
         )
-    return None
-
-
-@dataclass
-class ParseResultBlock:
-    """Parser 统一输出的结构化 block，是切分阶段的输入。"""
-
-    text: str                       # 文本内容
-    block_type: str                 # 块类型（如标题、段落等）
-    page_no: int | None             # 所在页码
-    bbox: list[float] | None        # 边界框坐标
-    section_path: list[str]         # 章节路径
-    order: int = 0                  # 顺序号
-    source_span: SourceSpan | None = None   # 原始位置信息
-    metadata: dict[str, Any] = field(default_factory=dict)  # 额外元数据
+        for block in blocks
+    ]

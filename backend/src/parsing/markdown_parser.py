@@ -4,6 +4,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from langchain_core.documents import Document
+from .models import parsed_documents
+
 # 正则：匹配 Markdown 标题（如 # 标题）
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 # 正则：匹配无序列表（- * +）或有序列表（1.）
@@ -29,7 +32,7 @@ class MarkdownParser:
             or _HR_RE.match(stripped)
         )
 
-    def parse(self, doc_id: str, parse_config: dict) -> list[dict]:
+    def parse(self, doc_id: str, parse_config: dict) -> list[Document]:
         """解析 Markdown 文件，输出结构化 block 列表。"""
         file_path = Path(parse_config.get("file_path", ""))
         if not file_path.exists():
@@ -163,4 +166,4 @@ class MarkdownParser:
 
         if not blocks:
             raise ValueError("no parseable content found")
-        return blocks
+        return parsed_documents(blocks, doc_id, str(parse_config.get("doc_name") or file_path.name))

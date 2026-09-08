@@ -1,93 +1,68 @@
-# 对外部依赖（检索存储 / Embedding / 重排）的抽象接口。
-# 只保留确实有多个实现、或测试需要替换的契约：
-# - SearchStore：生产用 Elasticsearch，测试注入 FakeStore。
-# - EmbeddingModel：生产可用 GLM/OpenAI，本地可用 hash。
-# - Reranker：rule 与 cross-encoder 两个实现。
-# 纯领域数据结构（ParseResultBlock / ChunkMeta / RetrievedChunk / Citation）
-# 只服务于单一阶段，已经下沉到各自阶段的 models.py，不再在这里集中定义。
+"""md-v1 公共契约；文本统一用 LangChain Document，metadata 只做类型提示。
+
+字符区间为父块规范化文本中的 [start, end)，行号从 1 开始且两端包含。
+Document 已接入业务；下列 md-v1 字段提示随各阶段逐项落实。
+"""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Literal, TypedDict
 
-# 嵌入向量类型别名
-EmbeddingVector = list[float]
+from langchain_core.documents import Document
 
+SCHEMA_VERSION = "md-v1"
 
-class EmbeddingModel(Protocol):
-    """Embedding 模型协议，将文本编码为向量。"""
-    backend_name: str
-    max_input_tokens: int | None
-
-    def encode(self, texts: Sequence[str]) -> list[EmbeddingVector]: ...
-
-
-def validate_embedding_vector(vector: Sequence[float]) -> None:
-    """校验嵌入向量是否为空。"""
-    if not vector:
-        raise ValueError("embedding vector cannot be empty")
+class DocumentRecord(TypedDict):
+    doc_id: str
+    name: str
+    source_path: str
+    batch_id: str
+    status: Literal["uploaded", "indexing", "ready", "failed"]
+    error: str | None
+    assets: dict[str, dict[str, str]]  # 每项 relative_path/mime_type/description
+    counts: dict[str, int]  # blocks/parents/children/images
 
 
-@dataclass
-class VectorRecord:
-    """Search storage record; context Parents deliberately have no vector."""
-    id: str                    # 记录唯一ID
-    doc_id: str                # 所属文档ID
-    vector: list[float] | None # Child vector; None for context-only Parent
-    payload: dict[str, Any] = field(default_factory=dict)   # 附加元数据
+class SourceSpan(TypedDict):
+    """原始结构块行范围可宽于展示片段，不承诺逐字来源坐标。"""
+
+    start: int
+    end: int
+    line_start: int
+    line_end: int
+    asset_id: str | None
 
 
-@dataclass
-class VectorSearchResult:
-    """向量检索结果。"""
-    id: str                    # 记录唯一ID
-    doc_id: str                # 所属文档ID
-    score: float               # 相似度得分
-    payload: dict[str, Any] = field(default_factory=dict)   # 附加元数据
+class MatchedChild(TypedDict):
+    chunk_id: str
+    score: float
+    vector_score: float
+    keyword_score: float
+    parent_start: int
+    parent_end: int
 
 
-class SearchStore(Protocol):
-    """向量检索存储协议，支持增删改查。"""
+class DocumentMetadata(TypedDict, total=False):
+    """各阶段共用字段提示；必填字段及坐标规则以 plan.md 为准。"""
 
-    def delete_by_doc_id(self, doc_id: str) -> None: ...   # 按文档ID删除
-
-    def delete_stale_by_doc_id(self, doc_id: str, keep_ids: list[str]) -> None: ...
-
-    def upsert(self, records: list[VectorRecord]) -> None: ...   # 插入或更新向量记录
-
-    def vector_search(
-        self,
-        query_vector: list[float],                # 查询向量
-        top_k: int,                               # 返回前 K 条结果
-        filters: dict[str, Any] | None = None,    # 过滤条件
-    ) -> list[VectorSearchResult]: ...            # 向量相似度搜索
-
-    def keyword_search(
-        self,
-        query: str,                                # 关键词查询
-        top_k: int,                               # 返回前 K 条结果
-        filters: dict[str, Any] | None = None,    # 过滤条件
-    ) -> list[dict]: ...                          # 关键词搜索
-
-    def query_by_ids(self, ids: list[str]) -> list[VectorRecord]: ...   # 按ID批量查询
-
-
-class ChatModel(Protocol):
-    """QA model capabilities required for strict prompt budgeting."""
-
-    model_name: str
-    context_limit_tokens: int
-    completion_reserve_tokens: int
-
-    def count_tokens(self, messages: Sequence[dict[str, str]]) -> int: ...
-
-    def complete(self, messages: Sequence[dict[str, str]]) -> str: ...
-
-
-class Reranker(Protocol):
-    """重排序模型协议。"""
-    backend_name: str
-
-    def rerank(self, query: str, chunks: list[dict]) -> list[dict]: ...   # 对候选块重新排序
+    doc_id: str
+    name: str
+    source_path: str
+    section_path: list[str]
+    asset_ids: list[str]
+    block_id: str
+    kind: Literal["heading", "text", "code", "table", "image"]
+    language: str | None
+    line_start: int
+    line_end: int
+    chunk_id: str
+    role: Literal["parent", "child"]
+    parent_id: str | None
+    parent_start: int
+    parent_end: int
+    spans: list[SourceSpan]
+    score: float
+    matched_children: list[MatchedChild]
+    evidence_id: int
+    window_start: int
+    window_end: int

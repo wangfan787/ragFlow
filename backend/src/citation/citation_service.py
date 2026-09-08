@@ -1,71 +1,45 @@
+"""从实际发送的 Document 生成引用，直接返回 JSON 字典。"""
 import re
 
-from backend.src.citation.models import Citation, validate_citation
-from backend.src.retrieval.models import RetrievedChunk
+from langchain_core.documents import Document
 
 
 class CitationService:
-    """Answer-evidence binding service."""
-
     _CITATION_PATTERN = re.compile(r"\[(\d+)\]")
 
-    def build(self, answer: str, chunks: list[RetrievedChunk]) -> dict:
-        referenced_indexes: list[int] = []
-        invalid_indexes: list[int] = []
-        seen: set[int] = set()
-        for match in self._CITATION_PATTERN.finditer(answer):
-            citation_index = int(match.group(1))
-            if citation_index in seen:
-                continue
-            seen.add(citation_index)
-            if 1 <= citation_index <= len(chunks):
-                referenced_indexes.append(citation_index)
-            else:
-                invalid_indexes.append(citation_index)
-
-        citations: list[Citation] = []
-        cited_chunks: list[RetrievedChunk] = []
-        for citation_index in referenced_indexes:
-            chunk = chunks[citation_index - 1]
-            snippet = " ".join(chunk.content.split())
+    def build(self, answer: str, chunks: list[Document]) -> dict:
+        indexes = list(dict.fromkeys(int(match.group(1)) for match in self._CITATION_PATTERN.finditer(answer)))
+        referenced = [index for index in indexes if 1 <= index <= len(chunks)]
+        invalid = [index for index in indexes if index not in referenced]
+        citations = []
+        for index in referenced:
+            chunk = chunks[index - 1]
+            metadata = chunk.metadata
+            snippet = " ".join(chunk.page_content.split())
             if len(snippet) > 160:
                 snippet = f"{snippet[:160].rstrip()}..."
-            citation = Citation(
-                citation_index=citation_index,
-                chunk_id=chunk.chunk_id,
-                doc_id=chunk.doc_id,
-                snippet=snippet,
-                page_no=chunk.page_no,
-                section_path=chunk.section_path,
-                context_chunk_id=chunk.chunk_id,
-                context_snippet=snippet,
-                context_span=dict(chunk.context_span),
-                prompt_span=dict(chunk.prompt_span),
-                matched_children=list(chunk.matched_children),
-                primary_matched_child_id=(
-                    chunk.primary_matched_child_id or chunk.matched_child_id
-                ),
-                source_span=dict(chunk.source_span),
-            )
-            validate_citation(citation)
-            citations.append(citation)
-            cited_chunks.append(chunk)
-
-        avg_score = 0.0
-        if cited_chunks:
-            avg_score = round(
-                sum(chunk.score for chunk in cited_chunks) / len(cited_chunks),
-                4,
-            )
-
+            if not metadata.get("doc_id") or not metadata.get("chunk_id") or not snippet:
+                raise ValueError("citation must include doc_id, chunk_id and evidence text")
+            citations.append({
+                "citation_index": index,
+                "chunk_id": metadata["chunk_id"], "doc_id": metadata["doc_id"],
+                "snippet": snippet, "page_no": metadata.get("page_no"),
+                "section_path": list(metadata.get("section_path", [])),
+                "context_chunk_id": metadata["chunk_id"], "context_snippet": snippet,
+                "context_span": dict(metadata.get("context_span") or {}),
+                "prompt_span": dict(metadata.get("prompt_span") or {}),
+                "matched_children": list(metadata.get("matched_children") or []),
+                "primary_matched_child_id": metadata.get("primary_matched_child_id") or metadata.get("matched_child_id"),
+                "source_span": dict(metadata.get("source_span") or {}),
+            })
+        average = round(
+            sum(chunks[index - 1].metadata["score"] for index in referenced) / len(referenced), 4,
+        ) if referenced else 0.0
         return {
-            "answer": answer,
-            "citations": [citation.__dict__ for citation in citations],
+            "answer": answer, "citations": citations,
             "trace": {
-                "citation_count": len(citations),
-                "evidence_count": len(chunks),
-                "referenced_indexes": referenced_indexes,
-                "invalid_indexes": invalid_indexes,
-                "citation_avg_score": avg_score,
+                "citation_count": len(citations), "evidence_count": len(chunks),
+                "referenced_indexes": referenced, "invalid_indexes": invalid,
+                "citation_avg_score": average,
             },
         }

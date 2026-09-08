@@ -4,7 +4,9 @@ import re
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
-from .models import ParseSource, parse_source_from_config
+from langchain_core.documents import Document
+
+from .models import ParseSource, parse_source_from_config, parsed_documents
 
 
 class HtmlParser:
@@ -16,7 +18,7 @@ class HtmlParser:
     def _clean(text: str) -> str:
         return re.sub(r"[ \t\r\f\v]+", " ", text).strip()
 
-    def parse(self, doc_id: str, parse_config: dict | ParseSource) -> list[dict]:
+    def parse(self, doc_id: str, parse_config: dict | ParseSource) -> list[Document]:
         source = (
             parse_config if isinstance(parse_config, ParseSource) else parse_source_from_config(parse_config)
         )
@@ -132,4 +134,4 @@ class HtmlParser:
             normalized_cursor += 2
         if not blocks:
             raise ValueError("no parseable content found")
-        return blocks
+        return parsed_documents(blocks, doc_id, source.name)

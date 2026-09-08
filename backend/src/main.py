@@ -6,14 +6,12 @@ from fastapi.responses import JSONResponse
 
 from backend.src.apps.restful_apis.auth import router as auth_router
 from backend.src.apps.restful_apis.documents import router as documents_router
-from backend.src.apps.restful_apis.qa import router as qa_router
 from backend.src.apps.services.common_service import (
     ServiceError,
-    ensure_upload_dir,
     fail,
     now_ms,
-    ok,
 )
+from backend.src.infrastructure.models import ModelConfigurationError
 
 
 def create_app() -> FastAPI:
@@ -30,13 +28,6 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    @app.on_event("startup")
-    async def startup() -> None:
-        upload_dir = ensure_upload_dir()
-        probe = upload_dir / ".startup_probe"
-        probe.write_text("ok", encoding="utf-8")
-        probe.unlink(missing_ok=True)
 
     @app.middleware("http")
     async def request_trace_middleware(request: Request, call_next):
@@ -55,6 +46,10 @@ def create_app() -> FastAPI:
         details.setdefault("request_id", request.state.request_id)
         status_code = 401 if exc.code == "UNAUTHORIZED" else 400
         return JSONResponse(status_code=status_code, content=fail(exc.code, exc.message, details))
+
+    @app.exception_handler(ModelConfigurationError)
+    async def model_configuration_error_handler(request: Request, exc: ModelConfigurationError):
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
@@ -79,12 +74,11 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict:
-        ensure_upload_dir()
-        return ok({"status": "ok"})
+        return {"status": "ok"}
 
     app.include_router(auth_router, prefix="")
     app.include_router(documents_router, prefix="")
-    # app.include_router(qa_router, prefix="")  # TODO: create qa.py
+    # QA 路由待阶段 07 按最终 API 挂载。
     return app
 
 

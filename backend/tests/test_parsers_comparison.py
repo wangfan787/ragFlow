@@ -31,7 +31,7 @@ def compare_parser(parser_class, name: str):
     # 按类型统计
     type_counts = {}
     for block in blocks:
-        block_type = block["block_type"]
+        block_type = block.metadata["block_type"]
         type_counts[block_type] = type_counts.get(block_type, 0) + 1
 
     print("类型分布:")
@@ -45,19 +45,19 @@ def compare_parser(parser_class, name: str):
     # 显示前 10 个 block
     print(f"\n前 10 个 block 详情：")
     for i, block in enumerate(blocks[:10], 1):
-        block_type = block["block_type"]
+        block_type = block.metadata["block_type"]
         icon = {
             "frontmatter": "📋", "heading": "🏷️ ", "paragraph": "📝", "table": "📊",
             "list": "📑", "code": "💻", "blockquote": "💬", "hr": "➖",
         }.get(block_type, "  ")
-        section = " > ".join(block.get("section_path", [])) or "（无章节）"
-        text_preview = block["text"][:50].replace("\n", "⏎")
-        if len(block["text"]) > 50:
+        section = " > ".join(block.metadata.get("section_path", [])) or "（无章节）"
+        text_preview = block.page_content[:50].replace("\n", "⏎")
+        if len(block.page_content) > 50:
             text_preview += "…"
 
         print(f"  {icon} Block #{i:2d} [{block_type:<10}]")
         print(f"             章节: {section}")
-        print(f"             行号: L{block['source_span']['start_line']}-L{block['source_span']['end_line']}")
+        print(f"             行号: L{block.metadata['source_span']['start_line']}-L{block.metadata['source_span']['end_line']}")
         print(f"             内容: {text_preview}")
         print()
 
@@ -86,8 +86,8 @@ if __name__ == "__main__":
     # 逐个对比
     print(f"\n逐个 block 对比：")
     for i, (old, new) in enumerate(zip(old_blocks, new_blocks), 1):
-        old_type = old["block_type"]
-        new_type = new["block_type"]
+        old_type = old.metadata["block_type"]
+        new_type = new.metadata["block_type"]
         if old_type != new_type:
             print(f"  ⚠️  Block #{i}: 类型不同 {old_type} → {new_type}")
         else:

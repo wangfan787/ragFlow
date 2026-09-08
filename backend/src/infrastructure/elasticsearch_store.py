@@ -3,17 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 from backend.src.config.settings import settings
-from backend.src.contracts import VectorRecord, VectorSearchResult
+from langchain_core.documents import Document
 
 _KEYWORD_FIELDS = [
-    "important_kwd^30",
-    "important_tks^20",
-    "question_kwd^20",
-    "question_tks^20",
-    "title_tks^10",
-    "doc_name^10",
-    "section_path^8",
-    "content^2",
+    "doc_name^2",
+    "section_path^2",
+    "content",
 ]
 
 
@@ -138,21 +133,25 @@ class ElasticsearchStore:
             refresh=True,
         )
 
-    def upsert(self, records: list[VectorRecord]) -> None:
+    def upsert(self, records: list[Document], vectors: dict[str, list[float]]) -> None:
         if not records:
             return
-        dimensions = {len(record.vector) for record in records if record.vector}
+        dimensions = {len(vector) for vector in vectors.values()}
         if len(dimensions) != 1:
             raise ValueError("a bulk request must contain exactly one Child embedding dimension")
         vector_field = self._ensure_index(dimensions.pop())
 
         operations = []
         for record in records:
-            operations.append({"index": {"_index": self.index_name, "_id": record.id}})
-            source = {**record.payload, "chunk_id": record.id, "doc_id": record.doc_id}
-            if record.vector:
-                source["embedding_dim"] = len(record.vector)
-                source[vector_field] = record.vector
+            chunk_id = record.metadata["chunk_id"]
+            operations.append({"index": {"_index": self.index_name, "_id": chunk_id}})
+            source = {**record.metadata, "content": record.page_content}
+            vector = vectors.get(chunk_id)
+            if bool(source.get("retrieval_eligible")) != (vector is not None):
+                raise ValueError("only Child documents may have vectors")
+            if vector is not None:
+                source["embedding_dim"] = len(vector)
+                source[vector_field] = vector
             operations.append(source)
         response = self.client.bulk(operations=operations, refresh="wait_for")
         if response.get("errors"):
@@ -168,7 +167,7 @@ class ElasticsearchStore:
         query_vector: list[float],
         top_k: int,
         filters: dict[str, Any] | None = None,
-    ) -> list[VectorSearchResult]:
+    ) -> list[Document]:
         knn: dict[str, Any] = {
             "field": self._vector_field(len(query_vector)),
             "query_vector": query_vector,
@@ -186,22 +185,19 @@ class ElasticsearchStore:
             ignore_unavailable=True,
             allow_no_indices=True,
         )
-        return [
-            VectorSearchResult(
-                id=str(hit["_source"].get("chunk_id") or hit["_id"]),
-                doc_id=str(hit["_source"].get("doc_id", "")),
-                score=max(0.0, min(1.0, float(hit.get("_score") or 0.0))),
-                payload=dict(hit["_source"]),
-            )
-            for hit in response.get("hits", {}).get("hits", [])
-        ]
+        documents = []
+        for hit in response.get("hits", {}).get("hits", []):
+            document = self._document(hit)
+            document.metadata["score"] = max(0.0, min(1.0, float(hit.get("_score") or 0.0)))
+            documents.append(document)
+        return documents
 
     def keyword_search(
         self,
         query: str,
         top_k: int,
         filters: dict[str, Any] | None = None,
-    ) -> list[dict]:
+    ) -> list[Document]:
         bool_query: dict[str, Any] = {
             "must": [
                 {
@@ -226,41 +222,30 @@ class ElasticsearchStore:
         )
         hits = response.get("hits", {}).get("hits", [])
         max_score = max((float(hit.get("_score") or 0.0) for hit in hits), default=0.0)
-        return [
-            {
-                **hit["_source"],
-                "chunk_id": str(hit["_source"].get("chunk_id") or hit["_id"]),
-                "doc_id": str(hit["_source"].get("doc_id", "")),
-                "keyword_score": (
-                    float(hit.get("_score") or 0.0) / max_score if max_score else 0.0
-                ),
-                "keyword_trace": {
-                    "backend": "elasticsearch",
-                    "raw_bm25_score": float(hit.get("_score") or 0.0),
-                },
-            }
-            for hit in hits
-        ]
+        documents = []
+        for hit in hits:
+            document = self._document(hit)
+            raw_score = float(hit.get("_score") or 0.0)
+            document.metadata.update(
+                keyword_score=raw_score / max_score if max_score else 0.0,
+                keyword_trace={"backend": "elasticsearch", "raw_bm25_score": raw_score},
+            )
+            documents.append(document)
+        return documents
 
-    def query_by_ids(self, ids: list[str]) -> list[VectorRecord]:
+    @staticmethod
+    def _document(hit: dict) -> Document:
+        source = hit["_source"]
+        metadata = {
+            field: value for field, value in source.items()
+            if field != "content" and not (field.startswith("q_") and field.endswith("_vec"))
+        }
+        metadata["chunk_id"] = str(source.get("chunk_id") or hit["_id"])
+        metadata["doc_id"] = str(source.get("doc_id", ""))
+        return Document(page_content=str(source.get("content", "")), metadata=metadata)
+
+    def query_by_ids(self, ids: list[str]) -> list[Document]:
         if not ids or not self.client.indices.exists(index=self.index_name):
             return []
         response = self.client.mget(index=self.index_name, ids=ids)
-        records = []
-        for item in response.get("docs", []):
-            if not item.get("found"):
-                continue
-            payload = {
-                field: value
-                for field, value in item["_source"].items()
-                if not (field.startswith("q_") and field.endswith("_vec"))
-            }
-            records.append(
-                VectorRecord(
-                    id=str(payload.get("chunk_id") or item["_id"]),
-                    doc_id=str(payload.get("doc_id", "")),
-                    vector=None,
-                    payload=payload,
-                )
-            )
-        return records
+        return [self._document(item) for item in response.get("docs", []) if item.get("found")]

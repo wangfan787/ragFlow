@@ -5,7 +5,7 @@ import sqlite3
 from collections.abc import Iterable
 from copy import deepcopy
 
-from backend.src.config.data_paths import data_dir
+from backend.src.config.data_paths import database_path
 # from backend.src.adapters.vector_store.memory_vector_store import MemoryVectorStore
 # from backend.src.apps.services.vector_state_store import clear_vectors
 
@@ -24,7 +24,7 @@ def _connect() -> sqlite3.Connection:
     创建并返回一个 SQLite 数据库连接。
     如果数据库文件或 documents 表不存在，则自动创建。
     """
-    path = data_dir() / "vector_index.sqlite3"
+    path = database_path()
     # 确保数据库所在目录存在
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))

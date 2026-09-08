@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import re
 
-from .models import ParseSource, parse_source_from_config
+from langchain_core.documents import Document
+
+from .models import ParseSource, parse_source_from_config, parsed_documents
 
 
 class TextParser:
@@ -10,7 +12,7 @@ class TextParser:
 
     _PARAGRAPH_RE = re.compile(r"\S(?:.*?\S)?(?=\n\s*\n|\Z)", re.DOTALL)
 
-    def parse(self, doc_id: str, parse_config: dict | ParseSource) -> list[dict]:
+    def parse(self, doc_id: str, parse_config: dict | ParseSource) -> list[Document]:
         source = (
             parse_config if isinstance(parse_config, ParseSource) else parse_source_from_config(parse_config)
         )
@@ -47,4 +49,4 @@ class TextParser:
             )
         if not blocks:
             raise ValueError("no parseable content found")
-        return blocks
+        return parsed_documents(blocks, doc_id, source.name)

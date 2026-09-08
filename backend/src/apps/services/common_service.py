@@ -6,7 +6,8 @@ from pathlib import Path
 from fastapi import HTTPException,Request
 import jwt
 
-_API_ROOT = Path(__file__).resolve().parents[4]
+from backend.src.config.data_paths import uploads_dir
+
 _TOKEN_ALG = "HS256"
 _TOKEN_TTL_SECONDS = 24*60*60
 _DEMO_ROLE = "authenticated"
@@ -136,10 +137,7 @@ def to_dict(record: dict) -> dict:
 """
 
 def get_upload_dir()->Path:
-    raw = os.getenv("MVP_LOAD_DIR","").strip()
-    if raw:
-        return Path(raw).expanduser()
-    return _API_ROOT / "uploads"
+    return uploads_dir()
 
 def ensure_upload_dir() ->Path:
     directory = get_upload_dir()

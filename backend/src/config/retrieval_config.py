@@ -1,27 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Any, Optional
-
-
-@dataclass(frozen=True)
-class IngestionConfig:
-    """摄入配置类"""
-    chunk_size: int = 500
-    chunk_overlap: int = 50
-    max_chunks: int | None = None
-    extract_metadata: bool = True
-
-    def __post_init__(self):
-        """验证配置有效性"""
-        if self.chunk_size <= 0:
-            raise ValueError("chunk_size must be > 0")
-        if self.chunk_overlap < 0:
-            raise ValueError("chunk_overlap must be >= 0")
-        if self.chunk_overlap >= self.chunk_size:
-            raise ValueError("chunk_overlap must be < chunk_size")
-        if self.max_chunks is not None and self.max_chunks <= 0:
-            raise ValueError("max_chunks must be > 0 or None")
 
 
 @dataclass(frozen=True)

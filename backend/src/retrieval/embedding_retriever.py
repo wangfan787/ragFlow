@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import logging
+import math
 
-from backend.src.contracts import EmbeddingModel, SearchStore, VectorRecord
+from langchain_core.embeddings import Embeddings
+from langchain_core.documents import Document
+
+from backend.src.config.settings import settings
 from backend.src.infrastructure.elasticsearch_store import ElasticsearchStore
-from backend.src.infrastructure.embedding_factory import build_embedding_model
-from backend.src.retrieval.metadata_fields import retrieval_metadata_fields
+from backend.src.infrastructure.models import build_embeddings
 
 logger = logging.getLogger("mvp_api")
 
@@ -13,10 +16,10 @@ logger = logging.getLogger("mvp_api")
 class EmbeddingRetriever:
     def __init__(
         self,
-        embedding_model: EmbeddingModel | None = None,
-        store: SearchStore | None = None,
+        embedding_model: Embeddings | None = None,
+        store: ElasticsearchStore | None = None,
     ) -> None:
-        self._embedding = embedding_model or build_embedding_model()
+        self._embedding = embedding_model
         self._store = store or ElasticsearchStore()
 
     def retrieve(self, query: str, retrieval_config: dict | None = None) -> list[dict]:
@@ -24,11 +27,18 @@ class EmbeddingRetriever:
         top_k = int(config.get("top_k", 10))
         filters = config.get("filters") if isinstance(config.get("filters"), dict) else None
 
+        if len(query.encode("utf-8")) > 3072:
+            raise ValueError("检索问题不能超过 3072 UTF-8 字节")
+        if self._embedding is None:
+            self._embedding = build_embeddings()
         embedding = self._embedding
-        query_vector = embedding.encode([query])[0]
+        query_vector = embedding.embed_query(query)
+        dimension = getattr(embedding, "dimensions", None) or 1024
+        if len(query_vector) != dimension or not all(math.isfinite(x) for x in query_vector) or not any(query_vector):
+            raise ValueError("query embedding has invalid dimension, zero or non-finite values")
         model_filters = {
-            "embedding_backend": getattr(embedding, "backend_name", ""),
-            "embedding_model": getattr(embedding, "model_name", ""),
+            "embedding_backend": settings.text("MVP_EMBEDDING_BACKEND", "glm"),
+            "embedding_model": embedding.model,
             "embedding_dim": len(query_vector),
             "retrieval_eligible": True,
         }
@@ -38,33 +48,21 @@ class EmbeddingRetriever:
             filters={**(filters or {}), **model_filters},
         )
 
-        chunks: list[dict] = []
-        for row in rows:
-            payload = dict(row.payload)
-            chunks.append(
-                {
-                    "chunk_id": row.id,
-                    "doc_id": row.doc_id,
-                    "content": str(payload.get("content", "")),
-                    "score": row.score,
-                    "vector_score": row.score,
-                    "keyword_score": 0.0,
-                    "fused_score": row.score,
-                    "doc_name": str(payload.get("doc_name", "")),
-                    **retrieval_metadata_fields(payload),
-                    "embedding_backend": str(payload.get("embedding_backend", "")),
-                    "embedding_model": str(payload.get("embedding_model", "")),
-                    "embedding_dim": payload.get("embedding_dim"),
-                    "channel_hits": ["vector"],
-                }
-            )
+        chunks = [
+            {
+                **row.metadata, "content": row.page_content,
+                "vector_score": row.metadata["score"], "keyword_score": 0.0,
+                "fused_score": row.metadata["score"], "channel_hits": ["vector"],
+            }
+            for row in rows
+        ]
         logger.info(
             "retrieval.vector query=%r backend=%s filters=%s hits=%d top=%s",
             query,
             {
                 "store": "elasticsearch",
-                "embedding": getattr(embedding, "backend_name", ""),
-                "model": getattr(embedding, "model_name", ""),
+                "embedding": settings.text("MVP_EMBEDDING_BACKEND", "glm"),
+                "model": embedding.model,
                 "dim": len(query_vector),
             },
             filters,
@@ -82,5 +80,5 @@ class EmbeddingRetriever:
         )
         return chunks
 
-    def query_by_ids(self, ids: list[str]) -> list[VectorRecord]:
+    def query_by_ids(self, ids: list[str]) -> list[Document]:
         return self._store.query_by_ids(ids)

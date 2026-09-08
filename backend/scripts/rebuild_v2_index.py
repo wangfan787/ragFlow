@@ -21,7 +21,7 @@ from backend.src.chunking.chunk_config import ChunkConfig
 from backend.src.config.settings import settings
 from backend.src.indexing.embedding_indexer import EmbeddingIndexer
 from backend.src.infrastructure.elasticsearch_store import ElasticsearchStore
-from backend.src.infrastructure.embedding_factory import build_embedding_model
+from backend.src.infrastructure.models import build_embeddings
 
 
 def rebuild(index_name: str, *, limit: int | None = None, dry_run: bool = False) -> dict:
@@ -64,7 +64,7 @@ def rebuild(index_name: str, *, limit: int | None = None, dry_run: bool = False)
         raise ValueError(
             "v2 rebuild target already exists; choose a new empty physical index name"
         )
-    embedding_model = build_embedding_model()
+    embedding_model = build_embeddings()
     pipeline = IngestionPipeline(
         embedding_indexer=EmbeddingIndexer(
             embedding_model=embedding_model,
@@ -139,7 +139,7 @@ def rebuild(index_name: str, *, limit: int | None = None, dry_run: bool = False)
             or sample.get("chunk_role") != "child"
             or sample.get("retrieval_eligible") is not True
             or int(sample.get("embedding_dim", 0)) != dimension
-            or sample.get("embedding_model") != getattr(embedding_model, "model_name", "")
+            or sample.get("embedding_model") != embedding_model.model
         ):
             raise RuntimeError("v2 validation failed: Child sample schema/model contract mismatch")
         smoke = store.vector_search(
@@ -147,7 +147,7 @@ def rebuild(index_name: str, *, limit: int | None = None, dry_run: bool = False)
             top_k=1,
             filters={"doc_id": sample["doc_id"]},
         )
-        if not smoke or not smoke[0].payload.get("retrieval_eligible"):
+        if not smoke or not smoke[0].metadata.get("retrieval_eligible"):
             raise RuntimeError("v2 validation failed: filtered Child retrieval smoke test failed")
     manifest["validation"] = {
         "total_records": total,
@@ -155,7 +155,7 @@ def rebuild(index_name: str, *, limit: int | None = None, dry_run: bool = False)
         "child_vector_records": children,
         "expected_document_ids": sorted(per_document),
         "per_document_records": per_document,
-        "embedding_model": getattr(embedding_model, "model_name", ""),
+        "embedding_model": embedding_model.model,
         "embedding_dimension": dimension,
         "filtered_retrieval_smoke": bool(samples),
         "eligible_for_config_switch": limit is None,

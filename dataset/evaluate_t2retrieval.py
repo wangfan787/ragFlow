@@ -6,13 +6,18 @@ import argparse
 import hashlib
 import json
 import math
+import os
+import sys
 from pathlib import Path
 
 import numpy as np
 import pyarrow.parquet as pq
 
 ROOT = Path(__file__).resolve().parents[1]
-DATASET_DIR = ROOT / "dataset" / "T2Retrieval"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+# 默认全量目录；跑 1 万条子集时显式导出 T2_DATASET_DIR，防止误把全量送去 embedding。
+DATASET_DIR = Path(os.environ.get("T2_DATASET_DIR") or ROOT / "dataset" / "T2Retrieval")
 ARTIFACT_DIR = DATASET_DIR / "embeddings-v2"
 SCHEMA_VERSION = "t2-production-rag-v2"
 ADAPTER_ALGORITHM_VERSION = "production-adapter-v2.3-child-body"
@@ -105,6 +110,8 @@ def _load_artifact(name: str):
                     "chunk_id": row["chunk_id"],
                     "parent_id": row.get("parent_id"),
                     "doc_id": row["doc_id"],
+                    "chunk_order": row.get("chunk_order", 0),
+                    "embedding_text": row.get("embedding_text", ""),
                 }
             )
     if len(mapping) != vectors.shape[0]:
@@ -164,7 +171,9 @@ def _validate_evaluation_scope(
     ):
         raise ValueError("evaluation requires an all-rows corpus artifact")
     if (
-        query_meta.get("source_selection") != "prefix"
+        # 10k 子集场景：queries 文件本身就是被抽中的范围，全量嵌入时记为 "all"；
+        # 全量语料做 prefix 实验时仍为 "prefix"。两者都必须通过数量、指纹与 ID 校验。
+        query_meta.get("source_selection") not in ("prefix", "all")
         or int(query_meta.get("source_start_row", -1)) != 0
         or int(query_meta.get("source_end_row", -1)) != expected_query_count
         or int(query_meta.get("source_total_rows", -1)) != query_rows
@@ -244,6 +253,9 @@ def evaluate(
     engine: str,
     expected_query_count: int | None = 1000,
     enforce_scope: bool = True,
+    recall_k: list[int] | None = None,
+    rerank_model: str | None = None,
+    rerank_batch_size: int = 64,
 ) -> dict:
     for name, value in {
         "top_k": top_k,
@@ -254,9 +266,12 @@ def evaluate(
     }.items():
         if value <= 0:
             raise ValueError(f"{name} must be positive")
-    ranking_depth = max(top_k, 10)
+    cutoffs = sorted({int(k) for k in (recall_k or (1, 3, 5, 10))} | {top_k})
+    if any(k <= 0 for k in cutoffs):
+        raise ValueError("recall cutoffs must be positive")
+    ranking_depth = max(top_k, 10, *cutoffs)
     if candidate_top_k < ranking_depth:
-        raise ValueError("candidate_top_k must be >= max(top_k, 10)")
+        raise ValueError("candidate_top_k must be >= max(top_k, 10, *recall_k)")
     corpus_meta, corpus_vectors, corpus_map = _load_artifact("corpus")
     query_meta, query_vectors, query_map = _load_artifact("queries")
     for key in ("model", "backend", "dimension"):
@@ -267,6 +282,12 @@ def evaluate(
             raise ValueError("expected_query_count must be positive when scope enforcement is enabled")
         _validate_evaluation_scope(corpus_meta, query_meta, query_map, expected_query_count)
     qrels = _qrels()
+    reranker = None
+    if rerank_model:
+        # 复用生产 CrossEncoderReranker；模型下载走 HF_ENDPOINT 镜像。
+        from backend.src.infrastructure.cross_encoder_reranker import CrossEncoderReranker
+
+        reranker = CrossEncoderReranker(model_name=rerank_model, batch_size=rerank_batch_size)
     rankings: dict[str, list[str]] = {}
     candidate_count = min(candidate_top_k, corpus_vectors.shape[0])
 
@@ -309,8 +330,33 @@ def evaluate(
                 best_scores = np.take_along_axis(combined_scores, selected, axis=1)
                 best_indices = np.take_along_axis(combined_indices, selected, axis=1)
         for local_q in range(len(queries)):
-            order = np.argsort(best_scores[local_q])[::-1]
             qid = str(query_map[q_start + local_q]["doc_id"])
+            candidates = [
+                {
+                    "index": int(index),
+                    "vector_score": float(score),
+                    "chunk_order": corpus_map[int(index)].get("chunk_order", 0),
+                    "content": corpus_map[int(index)].get("embedding_text", ""),
+                }
+                for index, score in zip(best_indices[local_q], best_scores[local_q])
+                if int(index) >= 0
+            ]
+            if reranker is not None:
+                candidates = reranker.rerank(
+                    str(query_map[q_start + local_q].get("embedding_text", "")), candidates
+                )
+                rerank_indices = np.array([row["index"] for row in candidates], dtype=np.int64)
+                rerank_scores = np.array([row["score"] for row in candidates], dtype=np.float64)
+                rankings[qid] = _family_document_ranking(
+                    rerank_indices,
+                    rerank_scores,
+                    corpus_map,
+                    aggregation=aggregation,
+                    top_n=top_n,
+                    top_k=ranking_depth,
+                )
+                continue
+            order = np.argsort(best_scores[local_q])[::-1]
             rankings[qid] = _family_document_ranking(
                 best_indices[local_q, order],
                 best_scores[local_q, order],
@@ -320,7 +366,8 @@ def evaluate(
                 top_k=ranking_depth,
             )
 
-    recall_sum = mrr_sum = ndcg_sum = 0.0
+    recall_sums = {k: 0.0 for k in cutoffs}
+    mrr_sum = ndcg_sum = 0.0
     evaluated = 0
     relevant_pairs = 0
     retrievable_relevant_pairs = 0
@@ -332,9 +379,10 @@ def evaluate(
         relevant_pairs += len(relevant)
         retrievable_relevant_pairs += sum(doc_id in retrievable_doc_ids for doc_id in relevant)
         ranked = rankings[qid]
-        recall_hits = [doc_id for doc_id in ranked[:top_k] if doc_id in relevant]
+        for cutoff in cutoffs:
+            cutoff_hits = [doc_id for doc_id in ranked[:cutoff] if doc_id in relevant]
+            recall_sums[cutoff] += len(cutoff_hits) / max(1, len(relevant))
         top_ten_hits = [index for index, doc_id in enumerate(ranked[:10]) if doc_id in relevant]
-        recall_sum += len(recall_hits) / max(1, len(relevant))
         mrr_sum += 1.0 / (top_ten_hits[0] + 1) if top_ten_hits else 0.0
         dcg = sum(
             (2 ** relevant[doc_id] - 1) / math.log2(index + 2)
@@ -350,18 +398,19 @@ def evaluate(
         "artifact_schema": corpus_meta["schema_version"],
         "candidate_top_k": candidate_top_k,
         "candidate_engine": engine,
+        "rerank_model": rerank_model,
         "family_aggregation": "mean(hit_children)",
         "document_aggregation": aggregation,
         "top_n": top_n if aggregation == "topn-mean" else None,
         "evaluated_queries": evaluated,
-        "query_scope": f"prefix:{int(query_meta['document_rows'])}",
+        "query_scope": f"{query_meta.get('source_selection')}:{int(query_meta['document_rows'])}",
         "query_artifact_rows": int(query_meta["document_rows"]),
         "corpus_document_rows": int(corpus_meta["document_rows"]),
         "excluded_corpus_documents": int(corpus_meta["excluded_documents"]),
         "qrels_relevance_pairs": relevant_pairs,
         "retrievable_qrels_pairs": retrievable_relevant_pairs,
         "qrels_coverage": retrievable_relevant_pairs / relevant_pairs if relevant_pairs else 0.0,
-        f"Recall@{top_k}": recall_sum / evaluated,
+        **{f"Recall@{k}": recall_sums[k] / evaluated for k in cutoffs},
         "MRR@10": mrr_sum / evaluated,
         "nDCG@10": ndcg_sum / evaluated,
     }
@@ -370,6 +419,7 @@ def evaluate(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--top-k", type=int, default=10)
+    parser.add_argument("--recall-k", type=int, nargs="+", default=[1, 3, 5, 10])
     parser.add_argument("--candidate-top-k", type=int, default=100)
     parser.add_argument("--query-batch", type=int, default=8)
     parser.add_argument("--corpus-batch", type=int, default=4096)
@@ -377,6 +427,8 @@ def main() -> None:
     parser.add_argument("--top-n", type=int, default=3)
     parser.add_argument("--engine", choices=("faiss-hnsw", "exact"), default="faiss-hnsw")
     parser.add_argument("--expected-query-count", type=int, default=1000)
+    parser.add_argument("--rerank-model", default=None, help="cross-encoder 模型名；不传则关闭 rerank")
+    parser.add_argument("--rerank-batch-size", type=int, default=64)
     args = parser.parse_args()
     for name in ("top_k", "candidate_top_k", "query_batch", "corpus_batch", "top_n"):
         if getattr(args, name) <= 0:

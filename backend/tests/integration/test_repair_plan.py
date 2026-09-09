@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from backend.src.apps.services.qa_service import QAService
-from backend.src.chunking import ChunkConfig, MarkdownChunker
+from backend.src.chunking import ChunkConfig, BlockChunker
 from backend.src.chunking.token_counter import SimpleTokenCounter
 from langchain_core.documents import Document
 from backend.src.indexing.embedding_indexer import EmbeddingIndexer
@@ -82,7 +82,7 @@ def test_strict_chunking_conserves_unpunctuated_code_and_table():
         ("code", "identifier_without_spaces=" + "x" * 500),
         ("table", "|cell|" * 300),
     ):
-        chunks = MarkdownChunker().chunk([_block(text, block_type)], config)
+        chunks = BlockChunker().chunk([_block(text, block_type)], config)
         parents = [row for row in chunks if row.metadata["chunk_role"] == "parent"]
         children = [row for row in chunks if row.metadata["chunk_role"] == "child"]
         assert parents and children
@@ -104,7 +104,7 @@ def test_child_serialization_preserves_boundary_whitespace_and_exact_span():
         child_max_tokens=4,
         embedding_input_budget=50,
     )
-    chunks = MarkdownChunker().chunk([_block(text)], config)
+    chunks = BlockChunker().chunk([_block(text)], config)
     parent = next(row for row in chunks if row.metadata["chunk_role"] == "parent")
     children = [row for row in chunks if row.metadata["parent_id"] == parent.metadata["chunk_id"]]
     assert "".join(row.page_content for row in children) == parent.page_content == text
@@ -191,7 +191,7 @@ def test_file_parser_rejects_invalid_utf8_instead_of_dropping_bytes(tmp_path: Pa
 
 
 def test_indexer_embeds_only_children_and_keeps_parent_context_record():
-    chunks = MarkdownChunker().chunk([_block("正文内容。" * 80)], ChunkConfig())
+    chunks = BlockChunker().chunk([_block("正文内容。" * 80)], ChunkConfig())
     for chunk in chunks:
         chunk.metadata["doc_name"] = "doc.md"
         chunk.metadata["question_kwd"] = ["问题"]
@@ -207,7 +207,7 @@ def test_indexer_embeds_only_children_and_keeps_parent_context_record():
 
 
 def test_indexer_rejects_oversized_body_before_model_call():
-    chunks = MarkdownChunker().chunk([_block("content " * 60)], ChunkConfig())
+    chunks = BlockChunker().chunk([_block("content " * 60)], ChunkConfig())
     for chunk in chunks:
         chunk.metadata["embedding_input_budget"] = 1
     embedding = FakeEmbedding()

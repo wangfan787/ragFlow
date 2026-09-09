@@ -3,14 +3,14 @@
 from langchain_core.documents import Document
 
 from backend.src.chunking.chunk_config import ChunkConfig, build_chunk_config
-from backend.src.chunking.markdown_chunker import MarkdownChunker
+from backend.src.chunking.block_chunker import BlockChunker
 from backend.src.indexing.embedding_indexer import EmbeddingIndexer
 from backend.src.parsing.parser_factory import build_parser
 
 
 class IngestionPipeline:
     def __init__(self, *, embedding_indexer: EmbeddingIndexer | None = None) -> None:
-        self.chunker = MarkdownChunker()
+        self.chunker = BlockChunker()
         self.embedding_indexer = embedding_indexer or EmbeddingIndexer()
 
     def parse_stage(self, doc_id: str, parse_config: dict) -> list[Document]:

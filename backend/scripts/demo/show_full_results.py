@@ -23,7 +23,7 @@ def show_full_markdown_results():
     print("=" * 80)
     print()
 
-    md_file = Path(__file__).parent / "并发编程-锁.md"
+    md_file = Path(__file__).parents[2] / "tests" / "parsing" / "data" / "并发编程-锁.md"
     if not md_file.exists():
         print(f"❌ 文件不存在: {md_file}")
         return
@@ -119,7 +119,7 @@ def show_full_pdf_results():
     print("=" * 80)
     print()
 
-    pdf_file = Path(__file__).parent / "简历.pdf"
+    pdf_file = Path(__file__).parents[2] / "tests" / "parsing" / "data" / "简历.pdf"
     if not pdf_file.exists():
         print(f"❌ 文件不存在: {pdf_file}")
         return

@@ -16,7 +16,10 @@ _HR_RE = re.compile(r"^(?:-{3,}|\*{3,}|_{3,})$")
 
 
 class MarkdownParser:
-    """Markdown 解析器，显式支持 GFM 表格。"""
+    """旧版手写正则 Markdown 解析器，仅作为 test_parsers_comparison 的新旧对照保留。
+
+    生产入口是 markdown_parser_it.MarkdownParserIt（markdown-it-py）。
+    """
 
     def _is_special(self, line: str) -> bool:
         """判断当前行是否为特殊块（标题、代码块、表格、列表、引用、分割线）。"""

@@ -1,10 +1,10 @@
-"""从项目根用 agent 执行 python -m backend.tests.walkthrough_demo，查看真实父子切片。"""
+"""从项目根用 agent 执行 python -m backend.scripts.demo.walkthrough_demo，查看真实父子切片。"""
 from pathlib import Path
 
-from backend.src.chunking import ChunkConfig, MarkdownChunker
+from backend.src.chunking import ChunkConfig, BlockChunker
 from backend.src.parsing.parser_factory import build_parser
 
-MD_FILE = Path(__file__).parent / "parsing_test" / "sample_walkthrough.md"
+MD_FILE = Path(__file__).parents[2] / "tests" / "parsing" / "data" / "sample_walkthrough.md"
 
 
 def main():
@@ -21,7 +21,7 @@ def main():
         print(block.page_content)
 
     config = ChunkConfig()
-    chunks = MarkdownChunker().chunk(blocks, config)
+    chunks = BlockChunker().chunk(blocks, config)
     by_id = {chunk.metadata["chunk_id"]: chunk for chunk in chunks}
     print("\n父子切片：父块提供上下文，子块参与召回，长块受 token 上限约束")
     for parent in chunks:

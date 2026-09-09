@@ -4,14 +4,14 @@
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.src.parsing.markdown_parser import MarkdownParser
 from backend.src.parsing.markdown_parser_it import MarkdownParserIt
 
 # 测试 Markdown 文件
-TEST_MD = PROJECT_ROOT / "backend" / "tests" / "parsing_test" / "sample_walkthrough.md"
+TEST_MD = PROJECT_ROOT / "backend" / "tests" / "parsing" / "data" / "sample_walkthrough.md"
 DOC_ID = "test_doc"
 
 def compare_parser(parser_class, name: str):

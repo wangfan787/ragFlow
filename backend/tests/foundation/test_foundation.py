@@ -27,7 +27,7 @@ from backend.src.infrastructure.models import (
     build_embeddings,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture(autouse=True)

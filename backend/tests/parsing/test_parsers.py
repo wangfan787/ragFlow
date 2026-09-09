@@ -6,7 +6,7 @@ from langchain_core.documents import Document
 
 from backend.src.parsing.parser_factory import build_parser
 
-DATA = Path(__file__).parent
+DATA = Path(__file__).parent / "data"
 
 
 @pytest.mark.parametrize("kind,name", [("md", "并发编程-锁.md"), ("pdf", "简历.pdf")])

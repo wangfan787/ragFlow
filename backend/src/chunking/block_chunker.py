@@ -11,7 +11,7 @@ from backend.src.chunking.chunk_config import ChunkConfig, build_chunk_config
 from backend.src.chunking.token_counter import SimpleTokenCounter
 
 
-class MarkdownChunker:
+class BlockChunker:
     def __init__(self) -> None:
         self._merge = BlockMergeStrategy()
         self._counter = SimpleTokenCounter()

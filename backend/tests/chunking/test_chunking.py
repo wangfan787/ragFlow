@@ -5,9 +5,9 @@ import pytest
 from langchain_core.documents import Document
 
 from backend.src.parsing.parser_factory import build_parser
-from backend.src.chunking import ChunkConfig, MarkdownChunker
+from backend.src.chunking import ChunkConfig, BlockChunker
 
-DATA = Path(__file__).parents[1] / "parsing_test"
+DATA = Path(__file__).parents[1] / "parsing" / "data"
 
 
 @pytest.mark.parametrize("kind,name", [("md", "并发编程-锁.md"), ("pdf", "简历.pdf")])
@@ -16,7 +16,7 @@ def test_sample_chunking_preserves_parent_text_and_links(kind, name):
         "sample", {"file_type": kind, "file_path": str(DATA / name), "doc_name": name},
     )
     config = ChunkConfig()
-    chunks = MarkdownChunker().chunk(blocks, config)
+    chunks = BlockChunker().chunk(blocks, config)
     assert chunks and all(isinstance(chunk, Document) for chunk in chunks)
     parents = [chunk for chunk in chunks if chunk.metadata["chunk_role"] == "parent"]
     children = [chunk for chunk in chunks if chunk.metadata["chunk_role"] == "child"]

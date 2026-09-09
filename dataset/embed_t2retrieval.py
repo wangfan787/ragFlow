@@ -19,11 +19,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backend.src.apps.services.benchmark_adapter import ProductionRagAdapter
+from backend.src.chunking.token_counter import count_tokens
 from backend.src.config.settings import settings
 from backend.src.infrastructure.models import build_embeddings
 
 LOGGER = logging.getLogger("t2retrieval_embedding_v2")
-DATASET_DIR = ROOT / "dataset" / "T2Retrieval"
+# 默认全量目录；跑 1 万条子集时显式导出 T2_DATASET_DIR，防止误把全量送去 embedding。
+DATASET_DIR = Path(os.environ.get("T2_DATASET_DIR") or ROOT / "dataset" / "T2Retrieval")
 OUTPUT_DIR = DATASET_DIR / "embeddings-v2"
 SCHEMA_VERSION = "t2-production-rag-v2"
 ADAPTER_ALGORITHM_VERSION = "production-adapter-v2.3-child-body"
@@ -274,7 +276,7 @@ def _prepare_manifest(name: str, adapter: ProductionRagAdapter, limit: int | Non
                         "chunk_profile_version": "query-v1",
                         "chunk_profile_hash": profile_hash,
                         "embedding_profile": "query-v1",
-                        "embedding_input_tokens": adapter.text_builder.counter.count(query),
+                        "embedding_input_tokens": count_tokens(query),
                         "embedding_text": query,
                     }
                 ]

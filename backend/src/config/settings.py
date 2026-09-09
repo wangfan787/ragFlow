@@ -94,6 +94,16 @@ class Settings:
         
         return value
     
+    def optional_integer(self, name: str) -> int | None:
+        """获取整数值，未配置时返回 None（调用方自行决定默认/省略语义）"""
+        raw = self._get(name)
+        if raw is None or raw == "":
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            raise ValueError(f"invalid integer for {name}: {raw!r}")
+
     def float(self, name: str, default: float, *,
               min_value: float | None = None,
               max_value: float | None = None) -> float:

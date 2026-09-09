@@ -3,7 +3,7 @@
 import re
 
 from backend.src.chunking.chunk_config import ChunkConfig
-from backend.src.chunking.markdown_chunker import MarkdownChunker
+from backend.src.chunking.block_chunker import BlockChunker
 from backend.src.indexing.embedding_text_builder import EmbeddingTextBuilder
 from backend.src.parsing.parser_factory import build_parser
 
@@ -16,7 +16,7 @@ class ProductionRagAdapter:
         text_builder: EmbeddingTextBuilder | None = None,
     ) -> None:
         self.chunk_config = chunk_config or ChunkConfig()
-        self.chunker = MarkdownChunker()
+        self.chunker = BlockChunker()
         self.text_builder = text_builder or EmbeddingTextBuilder()
 
     def child_inputs(self, *, doc_id: str, doc_name: str, text: str) -> list[dict]:

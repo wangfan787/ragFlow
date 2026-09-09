@@ -1,0 +1,16 @@
+{
+  "seed": 42,
+  "num_queries": 500,
+  "pool_docs": 10000,
+  "qrels_pairs": 2614,
+  "source_sha256": {
+    "corpus.parquet": "fff808414c5fc8849cfc6e4349acabce6c0437baf9960affb9e3f30adce8b010",
+    "queries.parquet": "8fcaddbe9a6f2a088afa04d19858398b6896152815ffffbedeaa0f9e7c731e4e",
+    "qrels.parquet": "d411b6f1295815b526b57f0de5ca0c80a61abedb40e1621e453bfabdfdaac50c"
+  },
+  "source_sizes": {
+    "corpus.parquet": 154622057,
+    "queries.parquet": 821881,
+    "qrels.parquet": 1161933
+  }
+}

@@ -1,4 +1,0 @@
-interface:
-  display_name: "RAGFlow Source-First Review"
-  short_description: "先逐模块对照当前正式项目与RAGFlow源码，再讨论修改与审批"
-  default_prompt: "Use $design-before-code to compare the production RAG implementation with local ragflow-main module by module before proposing or implementing changes."

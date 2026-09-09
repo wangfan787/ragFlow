@@ -1,4 +1,4 @@
-"""查看完整解析内容或生成报告；从项目根用 agent 执行 python -m backend.tests.parsing_test.show_results。"""
+"""查看完整解析内容或生成报告；从项目根用 agent 执行 python -m backend.scripts.demo.show_results。"""
 import argparse
 from collections import Counter
 from datetime import datetime
@@ -30,12 +30,12 @@ def main():
     parser.add_argument("files", nargs="*", type=Path)
     parser.add_argument("--report", action="store_true", help="同时保存带时间戳的文本报告")
     args = parser.parse_args()
-    directory = Path(__file__).parent
+    directory = Path(__file__).parents[2] / "tests" / "parsing" / "data"
     files = args.files or [directory / "并发编程-锁.md", directory / "简历.pdf"]
     report = "\n\n".join(render(path) for path in files)
     print(report)
     if args.report:
-        destination = directory / f"parsing_report_{datetime.now():%Y%m%d_%H%M%S}.txt"
+        destination = Path(__file__).parent / f"parsing_report_{datetime.now():%Y%m%d_%H%M%S}.txt"
         destination.write_text(report, encoding="utf-8")
         print(f"已保存：{destination}")
 

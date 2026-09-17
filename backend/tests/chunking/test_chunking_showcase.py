@@ -20,6 +20,21 @@ from backend.src.parsing.parser_factory import build_parser
 
 ROOT = Path(__file__).resolve().parents[3]
 CORPUS = ROOT / "dataset" / "T2Retrieval-subset" / "corpus.parquet"
+DEBUG_DOC_ID = "260693"
+
+
+def _load_debug_row(doc_id: str = DEBUG_DOC_ID) -> dict:
+    table = pq.read_table(
+        CORPUS,
+        columns=["_id", "text", "title"],
+        filters=[("_id", "=", doc_id)],
+    )
+    rows = table.to_pylist()
+    if len(rows) != 1:
+        raise ValueError(
+            f"expected exactly one row for doc_id={doc_id}, got {len(rows)}"
+        )
+    return rows[0]
 
 
 def _pick_rows() -> list[tuple[dict, str]]:
@@ -132,3 +147,39 @@ def test_show_chunking_input_and_output_for_real_t2_docs() -> None:
                 assert cm["token_count"] <= config.child_max_tokens, "Child 不得超过硬上限"
                 assert parent.page_content[cm["parent_char_start"]:cm["parent_char_end"]] == child.page_content, \
                     "Child 必须是 Parent 文本的精确切片"
+
+def test_debug_single_complex_t2_html() -> None:
+    row = _load_debug_row()
+    config = ChunkConfig()
+
+    _show(row, "html", config)
+
+    text = str(row["text"])
+    blocks = build_parser("html").parse(
+        str(row["_id"]),
+        {
+            "file_type": "html",
+            "text": text,
+            "doc_name": str(row["_id"]),
+        },
+    )
+
+    chunks = BlockChunker().chunk(blocks, config)
+
+    parents = [
+        chunk
+        for chunk in chunks
+        if chunk.metadata["chunk_role"] == "parent"
+    ]
+    children = [
+        chunk
+        for chunk in chunks
+        if chunk.metadata["chunk_role"] == "child"
+    ]
+
+    # unstructured 引擎的 HTML 分块粒度比旧手写解析器更粗（相邻文本聚合
+    # 为更少的 element），块数从 51/22/51 变为 17/10/33；数量随引擎版本
+    # 可能漂移，这里锁定当前值防止无感知回归。
+    assert len(blocks) == 17
+    assert len(parents) == 10
+    assert len(children) == 33

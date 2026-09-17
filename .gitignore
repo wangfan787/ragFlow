@@ -22,6 +22,15 @@ htmlcov/
 # Downloaded datasets and generated benchmark artifacts. Keep dataset scripts
 # and dependency manifests, but never commit the local T2Retrieval contents.
 dataset/T2Retrieval/
+dataset/CRUD_RAG/
+
+# Rebuildable evaluation data and run outputs. Evaluation source code,
+# schemas, tests and documentation remain tracked.
+evaluation/datasets/crud_rag_mini_v1/
+evaluation/runs/
+evaluation/scores/
+evaluation/reports/generated/
+evaluation/failures/generated/
 
 # Generated local test reports and editor scratch files.
 backend/tests/tempCodeRunnerFile.py

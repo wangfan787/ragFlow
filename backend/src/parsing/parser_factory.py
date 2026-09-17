@@ -1,30 +1,20 @@
 # 导入未来特性以支持延迟注解求值
 from __future__ import annotations
 
-# 各格式解析器；全部输出统一的 ParseResultBlock
-from .markdown_parser_it import MarkdownParserIt  # Markdown：基于 markdown-it-py
-from .pdf_parser import PdfParser
-from .text_parser import TextParser
-from .html_parser import HtmlParser
+# 所有格式统一由 unstructured 引擎解析，输出一致的 ParseResultBlock 契约
+from .unstructured_parser import UnstructuredParser
+
+_SUPPORTED_TYPES = {"md", "markdown", "pdf", "txt", "text", "html", "htm"}
 
 
 def build_parser(file_type: str):
-    """根据文件类型构建对应的解析器实例。
+    """按文件类型返回解析器实例。
 
-    支持：
-    - md / markdown: Markdown（markdown-it-py）
-    - pdf: PDF
-    - txt / text: 纯文本
-    - html / htm: HTML
+    自 unstructured 统一引擎后，各格式共用同一个 UnstructuredParser；
+    这里保留工厂函数是为了维持「file_type 校验 + 统一入口」的调用契约，
+    ingestion_pipeline 与评测适配器都不感知引擎细节。
     """
-    normalized = (file_type or "").strip().lower()
-    normalized = normalized.lstrip(".")
-    if normalized in {"md", "markdown"}:
-        return MarkdownParserIt()
-    if normalized == "pdf":
-        return PdfParser()
-    if normalized in {"txt", "text"}:
-        return TextParser()
-    if normalized in {"html", "htm"}:
-        return HtmlParser()
-    raise ValueError(f"unsupported file_type for parser: {file_type}")
+    normalized = (file_type or "").strip().lower().lstrip(".")
+    if normalized not in _SUPPORTED_TYPES:
+        raise ValueError(f"unsupported file_type for parser: {file_type}")
+    return UnstructuredParser()

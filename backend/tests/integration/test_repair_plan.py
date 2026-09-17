@@ -139,7 +139,9 @@ def test_text_and_html_parsers_accept_in_memory_sources(tmp_path: Path):
     repeated = build_parser("html").parse(
         "repeat", {"file_type": "html", "text": "<p>same</p>\n<p>same</p>", "doc_name": "x"}
     )
-    assert repeated[0].metadata["source_span"]["start_char"] == 0
+    # unstructured 返回规范化后的元素文本，回定位坐标指向文本本身而非外层
+    # <p> 标签；不变量是重复片段必须定位到不同位置（游标单调前进）。
+    assert repeated[0].metadata["source_span"]["start_char"] > 0
     assert repeated[1].metadata["source_span"]["start_char"] > repeated[0].metadata["source_span"]["end_char"]
 
 

@@ -42,7 +42,7 @@
 ## 3. 当前事实基线
 
 - `backend/src` 约 5,000 行 Python，核心链路包含解析、父子分块、Embedding、ES、向量/BM25 混合检索、可选 Rerank、父块恢复、证据窗口、回答和引用。
-- 当前工作区正在把手写 Markdown/PDF/HTML/TXT 解析器迁移为 `UnstructuredParser` 统一实现。阶段记录显示迁移后 79 个测试通过；该数字是已有实施记录，本文件更新时没有重新执行测试。
+- 手写 Markdown/PDF/HTML/TXT 解析器已迁移为 `UnstructuredParser` 统一实现，并修复 PDF/Numba 在只读环境中的冷启动问题。2026-09-17 在 Conda `agent` 环境验证：后端 79 个测试通过；加入评测测试后全量 82 个测试通过。
 - PDF 当前使用 Unstructured `fast` 策略，不含 OCR 和版面模型；Markdown 表格会被规范化为纯文本，列表内围栏代码可能被拍平。
 - `QueryRewriteService` 有独立实现和测试，但未接入 `QAService`。
 - `RetrievalMetadataGenerator`（LLM 生成 important_kwd/question_kwd/title_tks 等检索元数据）有独立实现，但 `EmbeddingIndexer` 从未调用它，相关字段目前既未生成也未参与 BM25 检索；RAGFlow 同类机制的源码对比与接入方案见 `docs/compare.md`。
@@ -56,7 +56,7 @@
 | 功能 | 状态 | 现有优点 | 当前缺点 | 是否需要优化、如何优化 |
 |---|---|---|---|---|
 | 统一 Document 契约 | √ 已实现 | 解析、分块、索引、检索和引用共用 `Document(page_content, metadata)`，减少重复容器和转换 | metadata 仍保留部分旧字段；缺少严格 schema 校验 | `P0`：整理唯一字段表和 schema version；删除无消费者字段；关键边界增加校验 |
-| 统一解析引擎 | △ 重构中 | `UnstructuredParser` 统一处理 md/pdf/html/txt，下游分块不感知格式差异 | 新增依赖较重且需要 NLTK 数据；当前是未提交工作区改动 | `P0`：完成依赖、冷启动和部署验证；保留格式能力测试；记录真实解析耗时 |
+| 统一解析引擎 | √ 已实现 | `UnstructuredParser` 统一处理 md/pdf/html/txt；PDF 依赖按需加载，避免阻塞非 PDF 冷启动；后端 79 测试通过 | 新增依赖较重且需要 NLTK 数据；真实部署机解析耗时仍需记录 | `P1`：真实部署时记录各格式冷启动/热启动耗时；继续保留格式能力回归 |
 | Markdown 结构解析 | △ 部分实现 | 能映射 Title/List/Table/Code 等类别并维护 section path；有原文回定位 | GFM 表格结构丢失；列表内代码可能降级；图片未进入链路 | `P0`：补图片资产和 VLM 描述；评估 `text_as_html` 保留表格结构；用回归样例约束代码块 |
 | PDF 解析 | △ 部分实现 | 比旧版逐行 pypdf 更容易识别 Title/List 等结构；保留页码入口 | fast 策略无 OCR、表格推理、bbox 和复杂版面恢复 | Markdown 主线稳定前不扩张；`P2` 再基于失败数据决定 OCR/hi_res，而不是直接引入重模型 |
 | HTML/TXT 解析 | √ 已实现 | 统一入口、严格 UTF-8、TXT 可做精确坐标 | 不是核心展示场景；维护成本仍存在 | 暂时保留作为低成本能力，不继续扩展；若长期没有场景可删除 |
@@ -69,7 +69,7 @@
 | 向量检索 | √ 已实现 | ES KNN；强制过滤不可检索父块；有候选池和阈值 | 阈值和 TopK 没有业务数据支撑 | `P0`：用业务 Golden Set 扫描 candidate_top_k、threshold、final_top_k，保存曲线和最优配置 |
 | BM25 检索 | √ 已实现 | 可补足型号、术语和精确字符串；搜索文档名、章节和正文 | standard analyzer 对中文可能不足；索引侧增强字段（important/question）未生成未接入 | `P0/P1`：按 `docs/compare.md` 方案接入增强字段并评测；先按问题类型切片评测；仅在中文关键词场景显著失败时更换 analyzer |
 | 多路召回 | √ 已实现 | 向量和关键词均能召回并保留通道分数 | 当前串行执行，单通道失败会影响主链 | `P1`：并行执行、分别超时、单通道失败降级；记录每通道耗时和贡献率 |
-| 融合排序 | △ 可用但待验证 | 当前加权分数实现简单、可解释 | 向量与 BM25 分数尺度不天然一致，权重可能漂移 | `P0`：实现 Weighted RRF 作为候选，与当前加权融合做同集 A/B；由 Hit/Recall/MRR/nDCG 决定 |
+| 融合排序 | △ 可用但待验证 | 当前加权分数实现简单、可解释 | 向量与 BM25 分数尺度不天然一致，权重可能漂移 | `P0`：先保存当前 Weighted Sum 真实 baseline；`P2（条件触发）`：只有失败分析显示尺度问题时才实现 Weighted RRF 同集 A/B |
 | Rerank | △ 代码存在 | 有规则重排和 Cross Encoder，失败可回退融合结果 | 默认关闭；没有真实增益、延迟和成本报告 | `P0/P1`：固定“召回池→Rerank 池→最终 TopK”漏斗，比较开启前后的 nDCG、Evidence Recall、P95 |
 | 父块聚合 | √ 已实现 | 子块召回后恢复父块；同一 family 合并多个贡献子块并保留明细 | family score 当前用均值，可能压低单个强命中 | `P1`：比较 mean、max、top-N mean；同时观察文档级 Recall 和噪声 |
 | 证据窗口 | √ 已实现 | 以命中子块为锚点截取父块；远距离命中可拆多个窗口；控制 Prompt token | 默认 384 token 尚无业务最优性证据 | `P0`：比较 child-only、window、full-parent 的事实覆盖、证据密度、Faithfulness 和成本 |
@@ -82,7 +82,7 @@
 
 1. 完成 Unstructured 迁移与真实环境验证。
 2. 完成 Markdown 图片资产、VLM 描述和引用闭环。
-3. 建立 Weighted Sum、Weighted RRF、Rerank 的可复现实验。
+3. 建立 Weighted Sum 与现有 Rerank 的可复现实验；只有 baseline 暴露融合尺度问题时才增加 Weighted RRF。
 4. 用业务数据确定 TopK、阈值和证据窗口，而不是继续采用未经验证的默认值。
 
 ## 5. 后端层
@@ -144,16 +144,16 @@ init（固定数据和索引）
 
 | 数据集/能力 | 状态 | 当前规模或内容 | 如何验证 | 缺点与下一步 |
 |---|---|---|---|---|
-| 单元与集成测试 | △ 已有记录 | 当前阶段记录为 79 个测试通过 | 解析、分块、索引、检索、窗口、引用、改写的确定性断言 | `P0`：在固定环境重新运行，报告 collected/passed/failed/skipped 和耗时 |
+| 单元与集成测试 | √ 已验证 | Conda `agent`：后端 79 个、后端+评测 82 个测试通过 | 解析、分块、索引、检索、窗口、引用、改写和评测契约的确定性断言 | 继续作为每次改动的回归门槛；真实 ES/模型联调单独记录 |
 | T2Retrieval 子集 | √ 历史资产 | 10,000 篇候选文档、500 Query、2,614 qrels；已有向量产物和评分脚本 | 保留已有产物，不删除、不继续扩建 | 只能做检索实验，不能覆盖回答与引用；不再作为当前主线 |
-| CRUD-RAG Mini | × 待建设 | 目标 1,000 篇文档、150 条问答，1/2/3 文档各 50 条 | 固定 commit/seed/SHA；30 dev + 120 test；事件级隔离 | `P0`：按 `评测计划.md` 生成、校验并冻结 `crud_rag_mini_v1` |
+| CRUD-RAG Mini | √ 已冻结 | 1,000 篇文档、150 条问答，1/2/3 文档各 50 条；300 qrels | 固定 commit/seed/SHA；30 dev + 120 test；事件级隔离；validator 通过 | 原始与生成数据不提交 Git；通过构建器可复现 |
 | 解析评估集 | △ 有样例 | 真实 Markdown/PDF 和 showcase | 检查 expected facts、block types、来源范围、解析失败 | `P0`：固定 20–30 篇代表性文档；统计内容保留率、结构保留率、span 精度分布 |
 | 分块评测 | √ 有不变量 | 长中文、代码、表格、边界和坐标样例 | 内容守恒、token 上限、父子引用和坐标合法性 | 增加聚合报告，不只输出 pytest pass/fail |
-| 主线 RAG 评测集 | × 未实现 | `CRUD-RAG-mini-v1` 共 150 条，答案与证据来自公开基准的固定子集 | Retrieval、Evidence、Answer、Citation、Latency 分层评分 | `P0`：先完成确定性数据/评分闭环；语义 Judge 放 P1 |
-| Evidence 评测 | × 未实现 | 基于 CRUD-RAG 的 reference news 与 qrels | Evidence Recall、Precision、Token Density；检查必要文档是否进入 Prompt | `P0`：优先完成，它能定位问题在检索还是生成 |
+| 主线 RAG 评测集 | △ 数据与评分已实现 | `CRUD-RAG-mini-v1` 共 150 条，答案与证据来自公开基准的固定子集 | Retrieval、Evidence、Citation、Latency 的确定性 scorer 与报告器已完成 | `P1`：接入生产 runner，运行真实 ES/模型 baseline；语义 Judge 随后进行 |
+| Evidence 评测 | √ scorer 已实现 | 基于 CRUD-RAG 的 reference news 与 qrels | Evidence Recall/Precision 按 overall 与 1/2/3docs 分片 | `P1`：录制真实生产 evidence 后产出 baseline，不用测试夹具冒充结果 |
 | 回答正确性 | × 未实现 | question、expected facts、answer | 先做必要事实覆盖和禁止事实；再接 LLM Judge | `P1`：LLM Judge 结果抽样人工校准，不能当绝对真值 |
 | Faithfulness | × 未实现 | answer + 实际 evidence | claim 是否能被 evidence 支持 | `P1`：使用 Ragas 或自建 rubric；保存 judge 原始理由和失败 claim |
-| 引用评测 | △ 基础存在 | 当前只能校验编号和范围 | Validity、Correctness、Coverage、Unsupported Claims | `P0`：把回答 claim 与其引用证据对应评分，输出错误引用案例 |
+| 引用评测 | △ 文档级 scorer 已实现 | 可计算 Citation Validity 与 Citation Document Precision | 尚不能证明每个回答 claim 被对应引用支持 | `P1`：真实 run 先产出文档级 baseline，再用人工校准 Judge 做 claim-level Correctness/Coverage |
 | 拒答评测 | × 未实现 | 业务集中 15%–20% 不可回答问题 | 拒答 Precision、Recall、F1；误拒率和过回答率 | `P0`：统一 no_evidence 协议后接入 |
 | Query Rewrite 评测 | △ 只有单测 | 代词、省略、历史预算和失败回退样例 | 实体保留、约束保留、意图不变、独立可检索 | `P1`：接入主链后建设 20–30 组真实多轮对话 |
 | Prompt Injection 安全集 | × 未实现 | 文档注入、用户注入、引用欺骗、越权请求 | 系统指令遵循、数据隔离、拒绝危险行为 | `P1`：首版 15–20 条，所有真实安全失败加入回归集 |
@@ -229,8 +229,8 @@ CI 只运行稳定且确定性的快速指标；需要真实模型或 LLM Judge 
 4. 补齐文档 UUID、状态、error、counts、source/assets/delete/retry。
 5. 实现 Markdown 图片提取、VLM 描述、入库和引用预览。
 6. 完成最小前端：上传、入库状态、问答、答案、引用和原文/图片预览。
-7. 建设 `CRUD-RAG-mini-v1`（1,000 文档、150 问题）和确定性评测 runner。
-8. 产出 Vector、Hybrid Weighted Sum、Weighted RRF、Rerank 的首份对比报告。
+7. `√` 已建设 `CRUD-RAG-mini-v1`（1,000 文档、150 问题）及确定性 scorer/report；生产链路 runner 与真实 baseline 进入下一阶段。
+8. 产出 Vector、Hybrid Weighted Sum、Rerank off/on 的首份对比报告；仅在失败分析需要时追加 Weighted RRF。
 9. 用评测确定 TopK、阈值、证据窗口，更新默认配置。
 
 P0 验收：

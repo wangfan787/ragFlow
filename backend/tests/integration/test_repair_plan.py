@@ -364,8 +364,8 @@ def test_qa_default_path_invokes_langchain_and_reuses_model(monkeypatch):
     monkeypatch.setattr(qa_service, "build_chat", lambda kind: built.append(kind) or model)
     service = QAService()
     assert built == []
-    assert service._generate_answer("question", []) == "answer [1]"
-    assert service._generate_answer("second", []) == "answer [1]"
+    assert service._generate_answer("question", []).answer == "answer [1]"
+    assert service._generate_answer("second", []).answer == "answer [1]"
     assert built == ["qa"]
     assert "second" in model.messages[1]["content"]
 

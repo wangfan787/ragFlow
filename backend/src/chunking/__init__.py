@@ -1,3 +1,5 @@
+"""分块模块的公共入口。"""
+
 from .block_chunker import BlockChunker
 from .chunk_config import ChunkConfig, build_chunk_config
 from .token_counter import SimpleTokenCounter

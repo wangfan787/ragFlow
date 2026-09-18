@@ -174,35 +174,76 @@ class HybridRouter:
         query: str,
         retrieval_config: RetrievalConfig | dict | None = None,
     ) -> list[Document]:
+        """兼容入口：只返回文档；请求级 trace 见 retrieve_detailed()。"""
+        results, _trace = self.retrieve_detailed(query, retrieval_config)
+        return results
+
+    def retrieve_detailed(
+        self,
+        query: str,
+        retrieval_config: RetrievalConfig | dict | None = None,
+    ) -> tuple[list[Document], dict]:
+        """执行检索并返回请求级 trace（不依赖共享的 last_trace 状态）。
+
+        通道门控：retrieval_mode 未选中的通道完全不执行，保证
+        Vector-only / Keyword-only 是严格消融，而不是权重为 0 的假单通道。
+        """
         config = build_retrieval_config(retrieval_config)
 
-        vector_rows = self.embedding_retriever.retrieve(
-            query,
-            {
-                "top_k": config.candidate_top_k,
-                "filters": config.filters,
-            },
-        )
-        keyword_rows = self.keyword_retriever.retrieve(
-            query,
-            {
-                "top_k": config.candidate_top_k,
-                "filters": config.filters,
-            },
-        )
+        # ---- 通道门控：只执行 retrieval_mode 选中的召回通道 ----
+        vector_rows: list[dict] = []
+        keyword_rows: list[dict] = []
+        if config.retrieval_mode in ("vector", "hybrid"):
+            vector_rows = self.embedding_retriever.retrieve(
+                query,
+                {
+                    "top_k": config.candidate_top_k,
+                    "filters": config.filters,
+                },
+            )
+        if config.retrieval_mode in ("keyword", "hybrid"):
+            keyword_rows = self.keyword_retriever.retrieve(
+                query,
+                {
+                    "top_k": config.candidate_top_k,
+                    "filters": config.filters,
+                },
+            )
+
+        # 单通道模式下把该通道权重置为 1：融合分与通道原始分同尺度，
+        # 相似度阈值才能在 vector/keyword/hybrid 三种模式之间横向比较。
+        if config.retrieval_mode == "vector":
+            vector_weight, keyword_weight = 1.0, 0.0
+        elif config.retrieval_mode == "keyword":
+            vector_weight, keyword_weight = 0.0, 1.0
+        else:
+            vector_weight, keyword_weight = config.vector_weight, config.keyword_weight
+
         fused_rows = self.fusion.fuse(
             vector_rows,
             keyword_rows,
-            vector_weight=config.vector_weight,
-            keyword_weight=config.keyword_weight,
+            vector_weight=vector_weight,
+            keyword_weight=keyword_weight,
         )
+
+        # ---- 重排漏斗：召回池(candidate_top_k) -> 送排池(rerank_top_n) -> top_k ----
+        # rerank_top_n 未显式配置时等于整个融合池，保持旧行为（重排全部候选）。
+        rerank_top_n = (
+            config.rerank_top_n
+            if config.rerank_top_n is not None
+            else config.candidate_top_k
+        )
+        rerank_pool = fused_rows[:rerank_top_n]
 
         ranked_rows = fused_rows
         fallback_reason: str | None = None
-        if config.rerank_enabled:
+        rerank_model: str | None = None
+        if config.rerank_enabled and rerank_pool:
             try:
                 reranker = self._reranker_for_backend(config.rerank_backend)
-                ranked_rows = reranker.rerank(query, fused_rows)
+                ranked_rows = reranker.rerank(query, rerank_pool)
+                # rule 后端没有模型名；cross-encoder 记录实际模型便于复现
+                rerank_model = getattr(reranker, "model_name", None)
             except Exception as exc:  # pragma: no cover
                 fallback_reason = f"rerank_failed:{exc}"
                 logger.warning(
@@ -293,20 +334,31 @@ class HybridRouter:
                 }
             )
 
-        self.last_trace = {
+        trace = {
             "query_terms": sorted(query_terms(query)),
             "chunk_count": len(results),
             "avg_score": (
                 round(sum(row.metadata["score"] for row in results) / len(results), 4) if results else 0.0
             ),
+            "retrieval_mode": config.retrieval_mode,
             "vector_candidate_count": len(vector_rows),
             "keyword_candidate_count": len(keyword_rows),
             "fused_candidate_count": len(fused_rows),
             "eligible_candidate_count": len(eligible_rows),
             "vector_weight": config.vector_weight,
             "keyword_weight": config.keyword_weight,
+            # 单通道模式下的实际生效权重（可能与配置权重不同，见上方说明）
+            "vector_weight_effective": vector_weight,
+            "keyword_weight_effective": keyword_weight,
             "similarity_threshold": config.similarity_threshold,
             "rerank_enabled": config.rerank_enabled,
+            "rerank_backend": config.rerank_backend if config.rerank_enabled else None,
+            "rerank_model": rerank_model,
+            # 重排漏斗三段：召回池 -> 送排池 -> 最终 top_k，评测据此复现实验
+            "candidate_top_k": config.candidate_top_k,
+            "rerank_top_n_effective": rerank_top_n,
+            "rerank_sent_count": len(rerank_pool) if config.rerank_enabled else 0,
+            "final_top_k": config.top_k,
             "fallback_reason": fallback_reason,
             "parent_expansion": expand_trace,
             "chunk_traces": chunk_traces,
@@ -323,15 +375,19 @@ class HybridRouter:
                 < config.similarity_threshold
             ][:10],
         }
+        # last_trace 仅供旧调试路径读取；正式调用方应使用返回的请求级 trace，
+        # 避免并发请求互相覆盖。
+        self.last_trace = trace
         logger.info(
-            "retrieval.hybrid query=%r vector_candidates=%d "
+            "retrieval.hybrid query=%r mode=%s vector_candidates=%d "
             "keyword_candidates=%d fused_candidates=%d "
             "top=%s fallback_reason=%s",
             query,
+            config.retrieval_mode,
             len(vector_rows),
             len(keyword_rows),
             len(fused_rows),
             chunk_traces[:5],
             fallback_reason,
         )
-        return results
+        return results, trace

@@ -1,6 +1,6 @@
 # 算法层 QA 与可执行工作计划
 
-更新日期：2026-09-17。
+更新日期：2026-09-19。
 
 本文专门解释 `docs/plan/README.md` 算法层里容易产生歧义的术语、优先级和验收口径，并把讨论结果沉淀成后续可执行清单。
 
@@ -10,94 +10,56 @@
 
 | 问题 | 结论 |
 |---|---|
-| 统一解析引擎是不是已经构造完毕？ | 新实现已经基本写出，但当前更准确的状态是“迁移已编码，待环境验收”，还不能写“已完成”。 |
-| 以前不是已经通过测试了吗？ | 历史测试通过能证明当时环境里的代码行为，不等于新环境可安装、首次启动可用、容器可部署，也不等于当前未提交迁移仍然通过。 |
+| 统一解析引擎是不是已经构造完毕？ | 是。Markdown、PDF、HTML、TXT 已统一到 `UnstructuredParser`，当前工作区回归通过；干净环境安装、服务上传联调和冷/热启动耗时属于后续部署验收，不再算算法 P0。 |
+| 以前不是已经通过测试了吗？ | 是。2026-09-19 在 Conda `agent` 环境重跑 `backend/tests + evaluation/tests`，结果为 `102 passed`；它能证明当前代码契约，但不能替代真实 ES、真实模型和部署联调。 |
 | 图片为什么要分块？ | 不切图片像素。图片保存为资产；`image block` 是图片在统一 Document 契约中的逻辑块。通常一图一块，只有过长的 VLM 文本描述才按文本切分。 |
 | VLM 描述是什么？ | 核心确实是把图片交给视觉模型，让它输出可检索的文字；但还需要资产保存、提示词约束、结构化输出、失败处理、索引和引用回传。 |
-| 来源坐标为什么是 P0？ | P0 不是要求所有坐标都逐字精确，而是要求系统诚实标记精度，不能让错误坐标驱动错误高亮。最小回归集是 P0，大规模比例统计可以后置。 |
+| 来源坐标为什么是 P0？ | “精度诚实 + 最小回归集”曾是 P0，目前已实现并通过回归；扩大到 20–30 篇并生成比例报告属于 P1。 |
 | 父子分块的 profile 是什么？ | 是一组命名的分块参数预设，不是用户画像，也不是模型。当前只有一套默认配置就够了，先保留 hash 和版本，出现明确失败再增加 profile。 |
 | 三种 Embedding 输入消融是不是三个模型？ | 不是。固定当前同一个 Embedding 模型，只比较“正文 / 标题+正文 / 章节路径+正文”三种输入模板。个人项目可因成本暂缓，不需要购买或配置多个模型。 |
 | 融合排序和 Rerank 为什么影响效果？ | 融合决定向量召回与 BM25 召回如何合并；Rerank 对合并后的少量候选做更精细的二次排序。前者决定候选池，后者主要改善头部顺序。 |
 | RRF 和 Rerank 都必须 P0 实现吗？ | 不必。P0 应先测当前 Weighted Sum 和已有 Rerank 的真实基线；Weighted RRF 是低成本候选方案，只有当前融合确有问题时再升为实现任务。 |
+| `vector_weight=1` 是不是 Vector-only？ | 不是；不过这个缺口已修复。现在使用 `retrieval_mode=vector`，测试已证明未选中的 BM25 通道调用次数为 0。 |
+| 为什么 Evidence Window 还要改配置接口？ | 这个缺口已修复。`QAService.query()` 已接受请求级 `QAConfig`，可在同一 Runner 中逐题比较 `child_only/window/full_parent`。 |
+| 为什么总延迟还不够？ | 这个缺口也已修复。QA 已返回请求级分阶段耗时和真实可得的 usage；剩余工作只是由 Runner 原样录制并形成真实 P50/P95、token 与成本基线。 |
 
 ---
 
-## 1. 统一解析引擎：为什么仍然写“重构中”
+## 1. 统一解析引擎：已完成什么，还剩什么
 
-### Q1：已经有 `UnstructuredParser` 了，为什么不算完成？
+### Q1：`UnstructuredParser` 现在算完成了吗？
 
-“代码已经写出来”和“工程能力已经验收”是两件事。
+算“算法实现与当前环境回归已完成”。当前证据包括：
 
-截至本文更新时，仓库证据是：
+- Markdown、PDF、HTML、TXT 已统一由 `UnstructuredParser` 承接，`parser_factory.py` 已接入统一实现。
+- PDF 相关重依赖按需加载，并已规避只读环境中的 Numba 缓存初始化问题。
+- 回归覆盖标题、列表、代码块、表格文本、frontmatter、HTML 实体、重复文本回定位、非法 UTF-8 和 PDF 文本提取等关键行为。
+- 2026-09-19 在 Conda `agent` 环境运行 `python -m pytest backend/tests evaluation/tests -q`，结果为 `102 passed`。
 
-- `backend/src/parsing/unstructured_parser.py` 已经统一承接 Markdown、PDF、HTML、TXT。
-- `parser_factory.py` 已切到统一实现。
-- 旧的四类手写解析器处于删除状态，新解析器仍是未提交文件；这说明迁移尚未形成稳定版本边界。
-- `backend/requirements.txt` 新增了较重的 `unstructured[md,pdf]`，并注明需要 NLTK 数据。
-- 项目的正确开发环境是 Conda `agent`；此前直接使用默认 Python 得出的“依赖缺失”结论无效。
-- 在 `agent` 环境中已确认 `pytest 8.4.2`、`unstructured`、`langchain_core 1.6.2`、`nltk 3.10.3` 均已安装。
-- 本次在 `agent` 中运行解析、分块和 document pipeline 测试时，5 个测试文件仍在收集阶段报错：导入 Unstructured PDF 模块时，Numba 报 `cannot cache function 'projection_by_bboxes': no locator available`。因此当前没有得到 passed/failed 用例结果，依赖组合或导入方式仍需修复。
+因此状态应写为：
 
-所以“△ 重构中”表达的是迁移和验收状态，不是在说设计还没写。更准确的文字应改成：
+> **√ 已实现并回归验证**
 
-> **△ 迁移已编码，待环境验收**
+仍未证明的是“任意干净环境都可一次安装”“真实服务上传链路已联调”“冷/热启动性能有基线”。这些属于部署与性能验收，合并为 P1，不再重复列为算法 P0。
 
-只有下面四层都满足，才改成“√ 已完成”：
+### Q2：后续的部署验收具体是什么？
 
-1. 代码验收：统一 parser 已接入主链，旧路径删除，没有双实现。
-2. 行为验收：Markdown、PDF、HTML、TXT 回归样例全部通过。
-3. 环境验收：全新环境按照文档一次安装成功，NLTK/系统依赖不靠开发者机器的隐式缓存。
-4. 部署验收：实际启动方式或容器中首次解析成功，并记录耗时与失败原因。
+只保留三个动作：
 
-### Q2：`完成依赖、冷启动和部署验证；保留格式能力测试；记录真实解析耗时` 分别是什么意思？
+1. 在干净目标环境验证 Python、Unstructured、PDF 系统库和 NLTK 数据可复现安装，运行时不依赖开发机隐式缓存。
+2. 按真实启动方式完成一次“上传 → 解析 → 分块 → 入库”，记录失败阶段和错误语义。
+3. 对小、中、大样例记录首次/热启动耗时、block 数和峰值内存，形成 P50/P95 基线。
 
-#### 依赖验证
-
-确认 `requirements.txt` 能在目标 Python 版本安装，且 PDF 相关系统库、NLTK 数据、Unstructured extras 都齐全。重点不是“我电脑上能 import”，而是“干净环境也能装”。
-
-#### 冷启动验证
-
-冷启动指第一次启动时，本机没有已经下载好的 NLTK 数据、模型缓存和临时文件。要验证：
-
-- 程序是否会临时联网下载；
-- 无网络部署是否会直接失败；
-- 首次解析耗时是否远高于后续解析；
-- 缺依赖时错误信息是否能指出解决办法。
-
-理想做法是把所需数据放进部署构建阶段，运行阶段不再偷偷下载。
-
-#### 部署验证
-
-使用项目真正的启动方式，而不是只在 IDE 或测试进程里调用 parser。至少跑一次：启动服务 → 上传样例 → 解析 → 分块 → 返回成功状态。
-
-#### 格式能力测试
-
-迁移到统一引擎不能只检查“有文本输出”，还要固定每种格式的重要能力：
-
-- Markdown：标题层级、列表、代码块、表格、frontmatter、重复文本回定位；
-- HTML：删除 script/style、实体解码、标题层级和保守坐标；
-- TXT：严格 UTF-8、段落与 exact 坐标；
-- PDF：页码、文本层 PDF 可读、扫描件明确不支持。
-
-#### 真实解析耗时
-
-不是在单元测试里 mock 一个时间，而是对真实小、中、大样例记录：文件大小、页数或字符数、block 数、首次耗时、热启动耗时、峰值内存。首版记录每类格式的 P50/P95 已经足够。
-
-### Q3：以前的 79 个测试通过不算数吗？
-
-算数，但它证明的范围有限。
+### Q3：`102 passed` 能证明什么？
 
 | 证据 | 能证明 | 不能证明 |
 |---|---|---|
-| 单元/回归测试通过 | 固定输入下的代码行为符合断言 | 新机器能安装、真实外部服务能用 |
-| 集成测试使用替身通过 | 各模块契约能连起来 | 真实 ES、真实模型、真实网络正常 |
-| 真实联调通过 | 当时配置下的完整链路可用 | 以后不会回归、性能可接受 |
-| 冷启动/部署验证 | 从零部署可复现 | 算法效果一定好 |
-| Golden Set 指标 | 给定数据集上的检索或回答效果 | 部署一定稳定 |
+| 当前单元/回归测试通过 | 固定输入下的解析、分块、检索、问答和评测契约符合断言 | 新机器能安装、真实外部服务能用 |
+| 使用替身的集成测试通过 | 模块边界和失败语义可组合 | 真实 ES、真实模型、真实网络正常 |
+| 后续真实联调 | 指定配置下完整链路可用 | 算法效果一定好、长期不会回归 |
+| 后续真实 baseline | 固定数据集上的效果、延迟与成本可比较 | 任意业务分布都同样有效 |
 
-因此正确表述是：
-
-> 历史记录显示迁移阶段曾有 79 个测试通过；当前还需在固定目标环境重跑，并补齐冷启动、部署和性能证据。
+所以测试通过的能力应从 P0 待办中移除；真实部署联调和业务效果评测继续按各自工作包验收。
 
 ---
 
@@ -109,7 +71,7 @@
 
 当前 `parser_factory.py` 只注册了 Markdown、PDF、HTML、TXT，没有 PNG/JPG 等图片类型。因此：
 
-- 文本格式的解析主链已经存在，仍需要迁移验收；
+- 文本格式解析主链已经完成并通过当前环境回归；
 - 图片是当前最明显的新能力缺口；
 - README 当前 P0 的实际范围是 **Markdown 中引用的本地图片**；
 - HTML 远程图片、PDF 内嵌图片、扫描 PDF、独立图片文件应分别定义，不能一句“支持图片”全部覆盖。
@@ -271,7 +233,7 @@ PDF:      exact 0%, line_only 0%, unavailable 100%
 - **P0：坐标契约诚实 + 最小回归集。** 因为项目把“来源可追溯”当作核心卖点，错误高亮会直接破坏可信度。
 - **P1：扩大到 20–30 篇文档、按格式输出完整比例报告和可视化。** 这是质量分析，不应阻塞最小闭环。
 
-因此原 README 把整件事都写成 P0 偏粗。更合理的验收是：P0 先覆盖 8–12 个高风险样例，保证不会把 line_only/unavailable 当 exact；完整统计随后补。
+这个最小 P0 已完成：现有回归覆盖重复文本、HTML 实体和 Child 坐标投影，并约束不把 `line_only/unavailable` 冒充 `exact`。后续只保留 P1：扩大到 20–30 篇文档并生成按格式统计报告。
 
 ---
 
@@ -480,7 +442,7 @@ rrf_score(d) = w_vector / (k + rank_vector(d))
 4. 中文场景显式使用中文/多语 Reranker，不能拿英文默认模型下结论。
 5. 报告失败样例，而不只报告总平均分。
 
-#### P1：视证据实现
+#### P2：失败证据触发后实现
 
 1. 如果 Weighted Sum 在不同 Query 上明显受分数刻度影响，再实现 Weighted RRF。
 2. 如果 RRF 在同集显著提升且没有不可接受的副作用，再替换默认融合。
@@ -488,146 +450,130 @@ rrf_score(d) = w_vector / (k + rank_vector(d))
 
 换句话说，**P0 是建立可信选择依据，不是强制把所有候选算法都上线。**
 
----
+### Q24：为什么 `vector_weight=1, keyword_weight=0` 不能当 Vector-only？
 
-## 7. 修订后的算法层工作计划
+因为“最终分数不给 BM25 权重”和“根本不执行 BM25”是两件事。旧版 `HybridRouter.retrieve()` 会依次调用向量与关键词 Retriever，再做融合。即使关键词权重为 0：
 
-下面的顺序按“先恢复可验证性，再补图片闭环，再做效果实验”排列。
+- BM25 仍产生调用耗时，Vector-only 的延迟不真实；
+- 关键词候选仍可能进入融合数据结构，阈值为 0 时尤其容易污染候选集合；
+- 单通道异常仍可能让所谓 Vector-only 实验失败。
 
-### P0-A：统一解析迁移验收
+因此生产配置需要显式模式：
 
-目标：把状态从“迁移已编码”推进为“目标环境已验证”。
-
-任务：
-
-- [ ] 固定 Python 版本和依赖安装方式。
-- [ ] 将 NLTK 数据下载放进明确的 bootstrap/镜像构建步骤。
-- [ ] 在干净环境安装 `backend/requirements.txt`。
-- [ ] 修复 Unstructured PDF 导入时的 Numba `no locator available` 缓存错误。
-- [ ] 运行 parsing、chunking 和 document pipeline 测试。
-- [ ] 为 md/html/txt/pdf 各保留至少 2 个代表样例。
-- [ ] 记录 collected/passed/failed/skipped、总耗时和失败日志。
-- [ ] 记录每种格式冷/热解析耗时、输入规模和 block 数。
-- [ ] 全部通过后提交统一 parser 与旧 parser 删除，README 改成“√ 已验证”。
-
-建议验证命令（先按项目根目录 README 进入开发环境）：
-
-```bash
-PYTHONPATH=. python -m pytest \
-  backend/tests/parsing \
-  backend/tests/chunking \
-  backend/tests/integration/test_document_pipeline.py -q
+```text
+retrieval_mode = vector  → 只调用 EmbeddingRetriever
+retrieval_mode = keyword → 只调用 KeywordRetriever
+retrieval_mode = hybrid  → 两路召回后 Weighted Sum
 ```
 
-验收标准：
+该缺口已于 2026-09-18 修复：`retrieval_mode` 已进入生产配置，验收测试使用可计数假 Retriever 证明未选通道调用次数为 0。Runner 只需传配置，不允许自己绕开 `HybridRouter` 拼一套实验实现。
 
-- 新环境不依赖开发机已有缓存；
-- 四种文本格式测试通过；
-- 文本层 PDF 能解析，扫描 PDF 明确报“不支持/无可解析内容”；
-- 没有恢复旧 parser 或双轨兼容层；
-- 产生一份带日期、Git commit、环境、耗时的验证记录。
+### Q25：Rerank 已经有开关，为什么还要改？
 
-### P0-B：Markdown 图片最小闭环
+`rerank_enabled` 和 `rerank_backend` 原本已存在，规则/Cross Encoder 的核心实现不需要重写；当时的缺口是没有独立 `rerank_top_n`，启用后会对整个融合池重排，无法固定下面的实验漏斗：
 
-目标：Markdown 本地图片能够被保存、理解、检索和引用。
+```text
+candidate_top_k（召回池）
+→ rerank_top_n（送排池，且不得大于召回池）
+→ top_k（最终结果）
+```
 
-任务：
+该缺口已于 2026-09-18 修复：生产配置已有 `rerank_top_n` 和范围校验，Trace 已保存 backend、模型名、送排数量和 fallback。剩余工作只有用真实业务集判断提升是否值得部署成本。
 
-- [ ] 只定义首版范围：Markdown 相对路径本地 PNG/JPEG/WebP；暂不抓远程 URL。
-- [ ] 在线 API 只接收 `document_id/asset_id` 等受控 ID，不接受客户端任意文件路径。
-- [ ] assets 关联 document；读取时通过 `asset_id + current_user_id` 查询数据库并检查 document owner。
-- [ ] 提取图片语法与原文 span；使用数据库保存的 storage_key 读取文件。
-- [ ] 防止绝对路径和 `..` 逃逸出项目文件存储目录。
-- [ ] SHA256 去重，生成 `asset_id`，原图保存到文档资产目录。
-- [ ] 定义 VLM JSON 输出 schema 和 prompt version。
-- [ ] 只有数据库归属检查通过后才能读取图片并调用 VLM。
-- [ ] 生成 `block_type=image` 的 Document。
-- [ ] chunker 将 image 视为原子块，并透传 `asset_id/document_id`。
-- [ ] Embedding 只处理描述文字，不处理图片二进制。
-- [ ] Citation 返回 `asset_id`；预览接口再次查询 owner 后返回原图。
-- [ ] VLM 超时、拒绝、空描述时保留资产并标记失败，不伪造描述。
-- [ ] 增加有权限、无权限、路径穿越和失效资源四类测试。
+### Q26：为什么 Evidence Window 必须改成请求级 `QAConfig`？
 
-验收标准：
+旧版窗口算法已经实现，但 `context_top_k` 和 `evidence_window_tokens` 在 `QAService` 构造时从全局配置读取。用修改环境变量、重启进程的方式扫描参数会带来三个问题：容易残留上一次配置、难以并行、run 文件无法证明某一题实际用了哪个值。
 
-- 同一图片重复出现时资产不重复保存；
-- 图片问题能召回 image Child；
-- 有权限用户的引用能打开正确原图，无权限用户得到 403/404；
-- 任何客户端输入都不能令服务读取授权 storage root 之外的文件；
-- 删除文档时资产按明确规则清理；
-- 无 Vision 配置时给出明确状态，不能静默生成假描述。
+建议引入与 `RetrievalConfig` 分离的不可变请求配置：
 
-### P0-C：来源坐标可信度
+```text
+QAConfig:
+  context_top_k
+  evidence_mode = child_only | window | full_parent
+  evidence_window_tokens
+```
 
-目标：引用展示不会把不可靠坐标伪装成逐字精确。
+该缺口已于 2026-09-18 修复：`QAService.query(question, retrieval_config, qa_config)` 已把最终生效值写入请求级 Trace，并支持 `child_only/window/full_parent`。Dev 集只需通过生产接口比较候选配置，不在 Runner 内复制 `ContextWindowBuilder`。
 
-任务：
+### Q27：结构化 usage 和分阶段耗时具体记录什么？
 
-- [ ] 建立 8–12 个高风险 span 样例。
-- [ ] exact 必须验证 `raw[start:end]` 与期望文本一致。
-- [ ] line_only 只允许行级展示。
-- [ ] unavailable 不允许逐字高亮。
-- [ ] 输出按格式的三档计数；完整 20–30 篇统计放 P1。
-- [ ] image block 的 source span 指向 Markdown 图片语法，asset 指向原图。
+旧版只有总请求延迟和 `prompt_used_tokens` 估算，供应商响应里的真实 usage 没有进入 QA payload，总耗时也无法定位退化发生在哪一段。
 
-验收标准：重复文本、Markdown 标记、HTML 实体、Child 坐标投影均不产生假 exact。
+每次 QA 应返回请求级、不可共享的 Trace：
 
-### P0-D：当前检索基线与 Rerank 决策
+```text
+trace.config:
+  retrieval_config / qa_config / model / index fingerprint
 
-目标：在不更换 Embedding 模型的前提下，证明当前默认检索是否合理。
+trace.timings_ms:
+  retrieval / window / generation / citation / total
 
-任务：
+trace.usage:
+  model / input_tokens / output_tokens / total_tokens / cost
+```
 
-- [ ] 保持 `embedding-3 + child-body-v1`，不做多模型采购。
-- [ ] 固定 Golden Set、索引指纹和检索参数。
-- [ ] 保存 Vector-only baseline。
-- [ ] 保存当前 Hybrid Weighted Sum baseline。
-- [ ] 固定 `candidate_top_k/rerank_top_n/final_top_k`。
-- [ ] 使用合适的中文/多语模型比较 Rerank off/on。
-- [ ] 报告 Hit/Recall/MRR/nDCG、Evidence Recall、P50/P95 和候选数。
-- [ ] 将已有 T2 历史结果整理成机器可读 JSON，再生成 Markdown 报告。
+该缺口已于 2026-09-18 修复：计时使用单调时钟，QA payload 已返回请求级 config/timings/usage；供应商未返回的字段记 `unavailable`，不补零。`last_trace` 仅保留兼容调试，正式评测使用 `retrieve_detailed()` 返回的请求局部 Trace。
 
-验收决策：
+---
 
-- Rerank 有稳定业务增益且延迟可接受：进入生产候选；
-- 只在 T2 提升、业务集不提升：保持默认关闭；
-- 当前 Weighted Sum 出现明显刻度或权重问题：新增 Weighted RRF 实验；
-- 没有证据表明 Weighted Sum 有问题：RRF 留在 P2 条件任务，不为“算法完整”而实现。
+## 7. 合并后的算法层工作计划
 
-### P1：P0 稳定后完善质量报告
+旧计划把解析验收、来源坐标、检索接口、多个参数实验分别列成 P0，导致同一条生产链被重复计数。2026-09-19 重新核对当前代码并在 Conda `agent` 环境运行 `backend/tests + evaluation/tests`，结果为 `102 passed`。当前状态合并如下。
 
-- [ ] 将 span 集扩到 20–30 篇并形成比例趋势报告。
+### 7.1 已完成，不再列入 P0 待办
 
-### P2：业务评测触发后再做
+| 能力 | 完成证据 | 后续非阻塞事项 |
+|---|---|---|
+| 统一解析与来源追踪 | md/pdf/html/txt 统一走 `UnstructuredParser`；Numba 缓存问题已规避；重复文本、HTML 实体、非法 UTF-8、嵌套代码、表格文本和来源精度分级有回归 | `P1` 补部署 bootstrap、冷/热耗时和 20–30 篇精度分布报告 |
+| 父子分块与 Embedding | 硬 token 上限、Parent/Child 内容守恒、坐标投影、profile hash、只嵌 Child 及向量合法性有回归 | 失败数据触发后再比较 profile 或 Embedding 输入模板 |
+| 离线评测基础设施 | CRUD-RAG Mini 1,000 文档/150 问题、确定性 validator/scorer/report 已完成并验证可复现 | 真实 run 由剩余 P0-B 生成 |
+| 生产评测接口 | `retrieval_mode`、`rerank_top_n`、请求级 `QAConfig`、请求级 config/timings/usage Trace 已实现并测试 | Runner 只负责编排与录制，不再复制算法 |
 
-- [ ] 当 code/table 失败形成稳定类别时，增加一个针对性 chunk profile。
-- [ ] 当 Weighted Sum 失败时，实现 Weighted RRF 并做同集 A/B。
-- [ ] 当召回失败指向上下文不足且预算允许时，在小样本上比较三种 Embedding 输入模板。
-- [ ] 再评估 HTML 图片、独立图片文件和 PDF 内嵌图片。
+### 7.2 剩余算法 P0：只有两个工作包
+
+#### P0-A：Markdown 图片/VLM 最小闭环
+
+- 只支持 Markdown 相对路径本地 PNG/JPEG/WebP，不顺带实现 HTML/PDF 图片或 OCR；
+- 资产读取必须基于 `document_id/asset_id/current_user_id` 鉴权，拒绝任意路径和 `..` 穿越；
+- 原图按 SHA256 保存，VLM 只生成受 schema 约束的描述文字；
+- image 作为原子 block，描述进入分块/Embedding，`asset_id/document_id` 透传到 Citation；
+- 预览再次鉴权；VLM 失败保留资产和失败状态，不伪造描述；
+- 验收有权限、无权限、路径穿越、重复图片和失效资源。
+
+#### P0-B：生产 Runner、baseline 与一次参数锁定
+
+- `evaluation/runner` 只调用生产 `IngestionPipeline/HybridRouter/QAService`；
+- 建独立评测索引和 index manifest，保存 dataset/Git/config/model/profile 指纹；
+- 录制 Vector、Hybrid Weighted Sum、Hybrid+Rerank，以及 child/window/full-parent 的真实 run；
+- 只在 Dev 扫 `candidate_top_k/top_k/threshold/vector_weight/rerank_top_n/evidence_window_tokens`，避免无边界组合；
+- 锁定后在 Test 各运行一次，生成机器可读 score、Markdown 报告和失败案例；
+- Rerank 无稳定收益则保持默认关闭；Weighted Sum 未暴露刻度问题则不实现 RRF。
+
+### 7.3 P1：P0 稳定后再做
+
+- 清理无消费者 metadata，并扩充解析/span 质量报告；
+- 接入 `question_kwd/question_tks` 等索引侧增强并评测口语问题切片；
+- 接入指代消解与口语规范化查询改写，建设多轮/歧义评测；
+- 多检索通道并行与失败隔离；
+- 经人工校准的 Faithfulness、Answer Correctness、Context Precision 等 Judge 指标。
+
+### 7.4 P2：失败证据触发后再做
+
+- 针对 code/table 的新 chunk profile；
+- Weighted RRF、Embedding 输入模板消融；
+- HyDE、Step-back、查询拆分；
+- OCR/hi_res、HTML/PDF 图片、知识图谱、联网搜索和 Agent/MCP。
 
 ### 当前明确不做
 
-- 不为了面试展示同时购买或配置多个 Embedding 模型。
-- 不切割图片像素来适配文本 chunk。
-- 不在没有失败数据时同时维护 default/code-heavy/table-heavy 多套索引。
-- 不因为 RRF 名字更“高级”就默认替换 Weighted Sum。
-- 不把历史 pytest 通过写成当前新环境、真实 ES 或真实模型已经联调。
+- 不为了面试展示同时购买或配置多个 Embedding 模型；
+- 不切割图片像素来适配文本 chunk；
+- 不在没有失败数据时维护多套 profile 或替换 Weighted Sum；
+- 不把 `102 passed` 写成真实 ES、模型或业务指标已经联调。
 
 ---
 
-## 8. 建议回写 `docs/plan/README.md` 的文字
-
-等本文结论确认后，建议对 README 做以下精确调整：
-
-1. “统一解析引擎：△ 重构中”改成“△ 迁移已编码，待环境验收”。
-2. 图片链路的“进入分块”改成“后端先校验资源归属和读取权限，再生成原子 image block；描述文字进入父子块与索引，原图不切分，预览再次鉴权”。
-3. 来源坐标拆成：P0 最小 span 回归和精度诚实；P1 扩大样本与完整比例报告。
-4. 父子分块 profile 改成 `P2（条件触发）`，不预先建设三套配置。
-5. Embedding 输入消融注明“固定同一模型，仅改变输入模板”，并改成预算/失败驱动任务。
-6. 融合排序改成：P0 保存当前 Weighted Sum baseline；RRF 作为失败驱动的 P1 候选。
-7. Rerank 改成：已有 T2 历史增益，P0 补当前业务 Hybrid 链路、延迟和可复现 report；是否默认开启由结果决定。
-
-## 9. 下一轮讨论入口
+## 8. 下一轮讨论入口
 
 后续每次讨论只需要在本文继续补三类内容：
 

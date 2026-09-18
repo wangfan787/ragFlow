@@ -15,7 +15,13 @@ class RetrievalConfig:
     rerank_enabled: bool = False
     rerank_backend: str = "rule"
     filters: Optional[dict[str, Any]] = None
-    
+    # 检索模式：vector 只走向量通道，keyword 只走 BM25，hybrid 两路召回后融合。
+    # 严格消融必须靠该字段让未选中的通道完全不执行，而不是把权重设为 0。
+    retrieval_mode: str = "hybrid"
+    # 送入 Reranker 的候选数（重排漏斗中段）。None 表示重排整个融合池，
+    # 即 candidate_top_k —— 保持旧版本行为，避免存量配置被迫显式声明。
+    rerank_top_n: Optional[int] = None
+
     def __post_init__(self):
         """验证配置有效性"""
         if self.top_k <= 0:
@@ -30,14 +36,29 @@ class RetrievalConfig:
             raise ValueError("sum of weights must be > 0")
         if self.rerank_backend not in {"rule", "cross-encoder"}:
             raise ValueError(f"unsupported rerank_backend: {self.rerank_backend}")
+        if self.retrieval_mode not in RETRIEVAL_MODES:
+            raise ValueError(f"unsupported retrieval_mode: {self.retrieval_mode}")
+        # 重排漏斗必须满足 top_k <= rerank_top_n <= candidate_top_k：
+        # 最终结果只能来自送排池，送排池只能来自召回池。
+        if self.rerank_top_n is not None and not (
+            self.top_k <= self.rerank_top_n <= self.candidate_top_k
+        ):
+            raise ValueError(
+                "rerank_top_n must satisfy "
+                f"top_k({self.top_k}) <= rerank_top_n({self.rerank_top_n}) "
+                f"<= candidate_top_k({self.candidate_top_k})"
+            )
 
 
 # 使用配置常量
 RETRIEVAL_CONFIG_WHITELIST = frozenset({
     "top_k", "candidate_top_k", "similarity_threshold",
-    "vector_weight", "keyword_weight", "rerank_enabled", 
-    "rerank_backend", "filters"
+    "vector_weight", "keyword_weight", "rerank_enabled",
+    "rerank_backend", "filters", "retrieval_mode", "rerank_top_n"
 })
+
+# 支持的检索模式：单通道模式用于严格的消融实验（未选中的通道不得执行）
+RETRIEVAL_MODES = frozenset({"vector", "keyword", "hybrid"})
 
 RERANK_BACKENDS = frozenset({"rule", "cross-encoder"})
 
@@ -106,6 +127,9 @@ def build_retrieval_config(
         "rerank_enabled": _as_bool,
         "rerank_backend": lambda v: str(v).strip().lower(),
         "filters": lambda v: dict(v) if isinstance(v, dict) else v,
+        "retrieval_mode": lambda v: str(v).strip().lower(),
+        # None 表示回退默认语义（等于 candidate_top_k），在下方统一处理
+        "rerank_top_n": lambda v: None if v is None else int(v),
     }
     
     for field, converter in field_converters.items():
@@ -115,9 +139,11 @@ def build_retrieval_config(
             except (ValueError, TypeError) as e:
                 raise ValueError(f"invalid value for {field}: {overrides[field]}") from e
     
-    # 处理 filters 的 None 特殊情况
+    # 处理 filters / rerank_top_n 的 None 特殊情况（显式传 None 表示回退默认语义）
     if "filters" in overrides and overrides["filters"] is None:
         data["filters"] = None
+    if "rerank_top_n" in overrides and (overrides["rerank_top_n"] is None or overrides["rerank_top_n"] == ""):
+        data["rerank_top_n"] = None
     
     # 归一化权重
     data["vector_weight"], data["keyword_weight"] = _normalize_weights(

@@ -58,5 +58,4 @@ python -m pytest evaluation/tests -q
 python -m pytest backend/tests evaluation/tests -q
 ```
 
-详细范围、P0/P1/P2 与面试口径见 [`docs/plan/评测计划.md`](../docs/plan/评测计划.md)。
-
+详细范围、E0–E3 阶段与面试口径见 [`docs/plan/评测计划.md`](../docs/plan/评测计划.md)。

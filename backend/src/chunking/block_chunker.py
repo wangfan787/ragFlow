@@ -12,12 +12,15 @@ from backend.src.chunking.token_counter import SimpleTokenCounter
 
 
 class BlockChunker:
+    """把解析块转换为带父子关系和来源信息的检索块。"""
+
     def __init__(self) -> None:
         self._merge = BlockMergeStrategy()
         self._counter = SimpleTokenCounter()
 
     @staticmethod
     def _merge_span(spans: list[dict | None]) -> dict | None:
+        """合并多个来源范围，并保留能够确认的最高精度。"""
         spans = [span for span in spans if span]
         if not spans:
             return None
@@ -34,6 +37,7 @@ class BlockChunker:
         return result
 
     def _child_span(self, item: dict) -> dict | None:
+        """把子块在父块中的坐标投影回原始文档。"""
         start, end = item.get("parent_char_start"), item.get("parent_char_end")
         fallback = [block.metadata.get("source_span") for block in item.get("source_blocks", [])]
         if start is None or end is None:
@@ -59,7 +63,9 @@ class BlockChunker:
     def chunk(
         self, parse_blocks: list[Document], chunk_config: ChunkConfig | dict,
     ) -> list[Document]:
+        """生成父块、子块及其稳定标识和检索元数据。"""
         config = build_chunk_config(chunk_config)
+        # 配置摘要进入 chunk_id，便于区分不同切分策略生成的数据。
         profile_hash = hashlib.sha256(
             json.dumps(asdict(config), sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()[:12]
@@ -70,6 +76,7 @@ class BlockChunker:
         )
         identified = [(order, item, f"{doc_id}_v2_{profile_hash}_{order}")
                       for order, item in enumerate(merged, start=1)]
+        # 先建立父子 ID 关系，再统一组装最终 Document。
         parents = {id(item): chunk_id for _, item, chunk_id in identified if item["chunk_role"] == "parent"}
         children: dict[str, list[str]] = {}
         for _, item, chunk_id in identified:

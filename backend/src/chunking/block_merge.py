@@ -1,4 +1,4 @@
-"""Strict parent/child chunk construction with content-conserving ranges."""
+"""按严格 token 上限构造内容守恒的父子块。"""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ _PREFERRED_BOUNDARY_RE = re.compile(r"[。！？!?；;\n]|\s")
 
 @dataclass(frozen=True)
 class TextFragment:
+    """一次文本切分的结果及其在原文本中的坐标。"""
+
     text: str
     start: int
     end: int
@@ -24,12 +26,13 @@ class TextFragment:
 
 
 class OversizedSplitter:
-    """Split every output under a hard token budget without dropping text."""
+    """在不丢失文本的前提下，把每个片段限制在 token 硬上限内。"""
 
     def __init__(self, counter: SimpleTokenCounter | None = None) -> None:
         self.counter = counter or SimpleTokenCounter()
 
     def _largest_end(self, text: str, start: int, budget: int) -> int:
+        """用二分查找得到预算内最远的结束位置。"""
         low, high = start + 1, len(text)
         best = start
         while low <= high:
@@ -44,6 +47,7 @@ class OversizedSplitter:
         return best
 
     def _preferred_end(self, text: str, start: int, hard_end: int, target: int) -> int:
+        """在硬上限内优先选择标点、换行或空白处切分。"""
         target_end = self._largest_end(text[:hard_end], start, target)
         minimum = start + max(1, (target_end - start) // 2)
         preferred = [m.end() for m in _PREFERRED_BOUNDARY_RE.finditer(text, minimum, hard_end)]
@@ -60,6 +64,7 @@ class OversizedSplitter:
         max_tokens: int,
         structural_type: str = "paragraph",
     ) -> list[TextFragment]:
+        """顺序切分文本，并保留每段的字符范围和续接标记。"""
         if target_tokens <= 0 or max_tokens <= 0 or target_tokens > max_tokens:
             raise ValueError("chunk token budgets must satisfy 0 < target <= max")
         if not text:
@@ -91,7 +96,7 @@ class OversizedSplitter:
 
 
 class BlockMergeStrategy:
-    """Build bounded parents, then bounded children anchored inside each parent."""
+    """先合并有上限的父块，再在每个父块内生成有坐标的子块。"""
 
     def __init__(self) -> None:
         self._counter = SimpleTokenCounter()
@@ -101,11 +106,11 @@ class BlockMergeStrategy:
         return str(block.metadata.get("block_type", "paragraph"))
 
     def _atomic_fragments(self, blocks: list[Document], config: ChunkConfig) -> list[dict]:
+        """将解析块规范化，并把超长块拆成可合并的最小片段。"""
         atoms: list[dict] = []
         for block in blocks:
             original = block.page_content
-            # Leading/trailing whitespace normalization is explicit. Offsets
-            # retain where the normalized text came from in the block.
+            # 去除首尾空白，同时保留规范化文本在原块中的字符偏移。
             leading = len(original) - len(original.lstrip())
             normalized = original.strip()
             if not normalized:
@@ -132,6 +137,7 @@ class BlockMergeStrategy:
         return atoms
 
     def _make_parent(self, atoms: list[dict], boundary: str | None = None) -> dict:
+        """拼接原子片段，并记录父块坐标到来源块坐标的映射。"""
         texts: list[str] = []
         segment_map: list[dict] = []
         cursor = 0
@@ -165,6 +171,7 @@ class BlockMergeStrategy:
         }
 
     def _merge_into_parents(self, blocks: list[Document], config: ChunkConfig) -> list[dict]:
+        """按结构边界和 token 预算将原子片段合并为父块。"""
         atoms = self._atomic_fragments(blocks, config)
         parents: list[dict] = []
         buffer: list[dict] = []
@@ -200,6 +207,7 @@ class BlockMergeStrategy:
         return parents
 
     def _overlapping_blocks(self, parent: dict, start: int, end: int) -> list:
+        """找出与父块指定字符区间重叠的来源块。"""
         blocks = []
         seen: set[int] = set()
         for segment in parent["segment_map"]:
@@ -212,6 +220,7 @@ class BlockMergeStrategy:
         return blocks or list(parent["source_blocks"][:1])
 
     def _split_into_children(self, parent: dict, config: ChunkConfig) -> list[dict]:
+        """在父块内部切出子块，并关联其来源块和父块坐标。"""
         pieces = self._splitter.split(
             parent["text"],
             target_tokens=config.child_target_tokens,
@@ -235,12 +244,13 @@ class BlockMergeStrategy:
                     "chunk_role": "child",
                 }
             )
-        # Exact normalized-parent conservation is a production invariant.
+        # 子块顺序拼接后必须完整还原规范化后的父块文本。
         if "".join(child["text"] for child in children) != parent["text"]:
             raise RuntimeError("child chunks do not conserve normalized parent content")
         return children
 
     def merge(self, blocks: list[Document], config: ChunkConfig) -> list[dict]:
+        """按“父块在前、所属子块在后”的顺序返回全部分块。"""
         merged: list[dict] = []
         for parent in self._merge_into_parents(blocks, config):
             merged.append(parent)

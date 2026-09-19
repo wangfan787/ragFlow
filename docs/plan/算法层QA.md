@@ -565,7 +565,7 @@ trace.usage:
 - Rerank 无稳定收益则保持默认关闭；Weighted Sum 未暴露刻度问题则不实现 RRF。
   → `decide_rerank()`：recall@10 增益 ≥ 1pp 且 mrr@10 不下降才默认开启，否则锁定配置剥离 rerank 覆盖。
 
-验证：`evaluation/tests/test_runner.py` 8 项（替身 store/embedding/chat）覆盖 manifest、run schema、no_evidence 映射、扫描锁定与 rerank 规则；另用真实 ES + embedding 完成 20 篇索引与 dev 检索 smoke（`rag-eval-smoke` 索引，212 条记录）。剩余为执行项：全量 1,000 篇索引 → Dev 扫描锁定 → Test 各运行一次，命令见 `evaluation/README.md`。
+验证：`evaluation/tests/test_runner.py` 8 项（替身 store/embedding/chat）覆盖 manifest、run schema、no_evidence 映射、扫描锁定与 rerank 规则；另用真实 ES + embedding 完成 20 篇索引与 dev 检索 smoke（`rag-eval-smoke` 索引，212 条记录）。**2026-09-19 真实 run 已全部执行**（全量 1,000 篇索引 → Dev 扫描锁定 → Test 检索与 QA 各模式运行一次，零失败）：锁定配置 Test 召回 97.5%（默认 hybrid 88.2%、纯向量 92.4%）、evidence recall 93.1%、引用正确率 96.7%（full_parent）、P95 2.3s，全程成本约 ¥2。过程与数字详见 [`调参实录.md`](调参实录.md)。
 
 ### 7.3 P1：P0 稳定后再做
 

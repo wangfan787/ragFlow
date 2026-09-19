@@ -35,6 +35,7 @@ def index_dataset(
     *,
     chunk_config: ChunkConfig | None = None,
     limit: int | None = None,
+    log_every: int = 100,
 ) -> dict:
     """把 corpus 全量写入 stack 指向的评测索引；返回 manifest 数据。"""
     corpus = [*read_jsonl(dataset_dir / "corpus.jsonl")]
@@ -45,7 +46,7 @@ def index_dataset(
     indexed_docs = 0
     failed_docs: list[dict] = []
     record_count = 0
-    for row in corpus:
+    for position, row in enumerate(corpus, start=1):
         doc_id = str(row["doc_id"])
         try:
             result = stack.pipeline.run(
@@ -61,6 +62,8 @@ def index_dataset(
             record_count += int(result.get("indexed_count", 0))
         except Exception as exc:  # noqa: BLE001 - 失败逐文档记录，不中断
             failed_docs.append({"doc_id": doc_id, "error": str(exc)[:300]})
+        if log_every and position % log_every == 0:
+            print(f"[index] {position}/{len(corpus)} indexed={indexed_docs} failed={len(failed_docs)}", flush=True)
 
     manifest = {
         "runner_version": RUNNER_VERSION,

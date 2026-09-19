@@ -186,6 +186,8 @@ def sweep_evidence(dataset_dir: Path, stack, split: str = "dev") -> dict:
                 "qa_config": qa_overrides,
                 "metrics": overall["metrics"],
                 "p95_total_ms": (overall["latency_ms"].get("total") or {}).get("p95"),
+                # 真实用量汇总（scorer 只聚合数值字段），供成本核算
+                "usage": overall.get("usage", {}),
             }
         )
 

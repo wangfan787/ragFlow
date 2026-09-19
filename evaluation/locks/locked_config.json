@@ -1,0 +1,767 @@
+{
+  "baselines": {
+    "hybrid": {
+      "citation_document_precision": 0.0,
+      "citation_validity": 0.0,
+      "evidence_precision": 0.3794444444444444,
+      "evidence_recall": 0.8666666666666667,
+      "hit@1": 0.8333333333333334,
+      "hit@10": 0.9666666666666667,
+      "hit@3": 0.9333333333333333,
+      "hit@5": 0.9666666666666667,
+      "mrr@10": 0.8861111111111111,
+      "ndcg@10": 0.8354781901521858,
+      "queries": 30,
+      "recall@1": 0.5055555555555555,
+      "recall@10": 0.8666666666666667,
+      "recall@3": 0.7777777777777778,
+      "recall@5": 0.8666666666666667
+    },
+    "hybrid_rerank": {
+      "citation_document_precision": 0.0,
+      "citation_validity": 0.0,
+      "evidence_precision": 0.4888888888888889,
+      "evidence_recall": 0.9222222222222223,
+      "hit@1": 0.7666666666666667,
+      "hit@10": 0.9333333333333333,
+      "hit@3": 0.9333333333333333,
+      "hit@5": 0.9333333333333333,
+      "mrr@10": 0.85,
+      "ndcg@10": 0.8599811111871212,
+      "queries": 30,
+      "recall@1": 0.42777777777777776,
+      "recall@10": 0.9222222222222223,
+      "recall@3": 0.8888888888888888,
+      "recall@5": 0.9222222222222223
+    },
+    "keyword": {
+      "citation_document_precision": 0.0,
+      "citation_validity": 0.0,
+      "evidence_precision": 0.39055555555555554,
+      "evidence_recall": 0.9444444444444444,
+      "hit@1": 0.7666666666666667,
+      "hit@10": 1.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "mrr@10": 0.8777777777777778,
+      "ndcg@10": 0.8677602913607236,
+      "queries": 30,
+      "recall@1": 0.45,
+      "recall@10": 0.9444444444444444,
+      "recall@3": 0.8833333333333333,
+      "recall@5": 0.9444444444444444
+    },
+    "vector": {
+      "citation_document_precision": 0.0,
+      "citation_validity": 0.0,
+      "evidence_precision": 0.4211111111111111,
+      "evidence_recall": 0.9555555555555556,
+      "hit@1": 0.8666666666666667,
+      "hit@10": 0.9666666666666667,
+      "hit@3": 0.9666666666666667,
+      "hit@5": 0.9666666666666667,
+      "mrr@10": 0.9166666666666666,
+      "ndcg@10": 0.9126251694509713,
+      "queries": 30,
+      "recall@1": 0.5111111111111111,
+      "recall@10": 0.9555555555555556,
+      "recall@3": 0.9222222222222222,
+      "recall@5": 0.9555555555555556
+    }
+  },
+  "created_at": "2026-09-19T04:51:10+00:00",
+  "dataset_manifest_sha256": "a8cea3930b5ad12ced4184d357f401f986a2413c3920db744085082942072d6a",
+  "es_index": "rag-eval-crud_rag_mini_v1",
+  "evidence_selection": [
+    {
+      "metrics": {
+        "citation_document_precision": 0.6205555555555555,
+        "citation_validity": 0.7666666666666667,
+        "evidence_precision": 0.3794444444444444,
+        "evidence_recall": 0.8666666666666667,
+        "hit@1": 0.8333333333333334,
+        "hit@10": 0.9666666666666667,
+        "hit@3": 0.9333333333333333,
+        "hit@5": 0.9666666666666667,
+        "mrr@10": 0.8861111111111111,
+        "ndcg@10": 0.8354781901521858,
+        "recall@1": 0.5055555555555555,
+        "recall@10": 0.8666666666666667,
+        "recall@3": 0.7777777777777778,
+        "recall@5": 0.8666666666666667
+      },
+      "p95_total_ms": 1927.1554999999985,
+      "qa_config": {
+        "evidence_mode": "child_only"
+      },
+      "usage": {
+        "input_tokens": {
+          "available": 30,
+          "total": 15269.0
+        },
+        "output_tokens": {
+          "available": 30,
+          "total": 2031.0
+        },
+        "total_tokens": {
+          "available": 30,
+          "total": 17300.0
+        }
+      }
+    },
+    {
+      "metrics": {
+        "citation_document_precision": 0.7703703703703704,
+        "citation_validity": 0.9,
+        "evidence_precision": 0.3794444444444444,
+        "evidence_recall": 0.8666666666666667,
+        "hit@1": 0.8333333333333334,
+        "hit@10": 0.9666666666666667,
+        "hit@3": 0.9333333333333333,
+        "hit@5": 0.9666666666666667,
+        "mrr@10": 0.8861111111111111,
+        "ndcg@10": 0.8354781901521858,
+        "recall@1": 0.5055555555555555,
+        "recall@10": 0.8666666666666667,
+        "recall@3": 0.7777777777777778,
+        "recall@5": 0.8666666666666667
+      },
+      "p95_total_ms": 2348.0314999999996,
+      "qa_config": {
+        "evidence_mode": "window",
+        "evidence_window_tokens": 256
+      },
+      "usage": {
+        "input_tokens": {
+          "available": 30,
+          "total": 58791.0
+        },
+        "output_tokens": {
+          "available": 30,
+          "total": 4359.0
+        },
+        "total_tokens": {
+          "available": 30,
+          "total": 63150.0
+        }
+      }
+    },
+    {
+      "metrics": {
+        "citation_document_precision": 0.7599867724867725,
+        "citation_validity": 0.8666666666666667,
+        "evidence_precision": 0.3794444444444444,
+        "evidence_recall": 0.8666666666666667,
+        "hit@1": 0.8333333333333334,
+        "hit@10": 0.9666666666666667,
+        "hit@3": 0.9333333333333333,
+        "hit@5": 0.9666666666666667,
+        "mrr@10": 0.8861111111111111,
+        "ndcg@10": 0.8354781901521858,
+        "recall@1": 0.5055555555555555,
+        "recall@10": 0.8666666666666667,
+        "recall@3": 0.7777777777777778,
+        "recall@5": 0.8666666666666667
+      },
+      "p95_total_ms": 2297.3584999999994,
+      "qa_config": {
+        "evidence_mode": "window",
+        "evidence_window_tokens": 384
+      },
+      "usage": {
+        "input_tokens": {
+          "available": 30,
+          "total": 64982.0
+        },
+        "output_tokens": {
+          "available": 30,
+          "total": 4139.0
+        },
+        "total_tokens": {
+          "available": 30,
+          "total": 69121.0
+        }
+      }
+    },
+    {
+      "metrics": {
+        "citation_document_precision": 0.7527777777777778,
+        "citation_validity": 0.8666666666666667,
+        "evidence_precision": 0.3794444444444444,
+        "evidence_recall": 0.8666666666666667,
+        "hit@1": 0.8333333333333334,
+        "hit@10": 0.9666666666666667,
+        "hit@3": 0.9333333333333333,
+        "hit@5": 0.9666666666666667,
+        "mrr@10": 0.8861111111111111,
+        "ndcg@10": 0.8354781901521858,
+        "recall@1": 0.5055555555555555,
+        "recall@10": 0.8666666666666667,
+        "recall@3": 0.7777777777777778,
+        "recall@5": 0.8666666666666667
+      },
+      "p95_total_ms": 2016.1799999999996,
+      "qa_config": {
+        "evidence_mode": "window",
+        "evidence_window_tokens": 512
+      },
+      "usage": {
+        "input_tokens": {
+          "available": 30,
+          "total": 47986.0
+        },
+        "output_tokens": {
+          "available": 30,
+          "total": 3764.0
+        },
+        "total_tokens": {
+          "available": 30,
+          "total": 51750.0
+        }
+      }
+    },
+    {
+      "metrics": {
+        "citation_document_precision": 0.8111111111111111,
+        "citation_validity": 0.9333333333333333,
+        "evidence_precision": 0.3794444444444444,
+        "evidence_recall": 0.8666666666666667,
+        "hit@1": 0.8333333333333334,
+        "hit@10": 0.9666666666666667,
+        "hit@3": 0.9333333333333333,
+        "hit@5": 0.9666666666666667,
+        "mrr@10": 0.8861111111111111,
+        "ndcg@10": 0.8354781901521858,
+        "recall@1": 0.5055555555555555,
+        "recall@10": 0.8666666666666667,
+        "recall@3": 0.7777777777777778,
+        "recall@5": 0.8666666666666667
+      },
+      "p95_total_ms": 1904.715,
+      "qa_config": {
+        "evidence_mode": "full_parent"
+      },
+      "usage": {
+        "input_tokens": {
+          "available": 30,
+          "total": 42393.0
+        },
+        "output_tokens": {
+          "available": 30,
+          "total": 3569.0
+        },
+        "total_tokens": {
+          "available": 30,
+          "total": 45962.0
+        }
+      }
+    }
+  ],
+  "git_commit": "84b2bcb1b08f72dd96f7eb3dfde33db76217b3f9",
+  "locked_qa_config": {
+    "evidence_mode": "full_parent"
+  },
+  "locked_retrieval_config": {
+    "candidate_top_k": 10,
+    "similarity_threshold": 0.2,
+    "top_k": 10,
+    "vector_weight": 0.75
+  },
+  "rerank_decision": {
+    "enabled": false,
+    "mrr@10_gain": -0.036111,
+    "recall@10_gain": 0.055556,
+    "rule": "recall@10 增益 >= 0.01 且 mrr@10 不下降才默认开启；无稳定收益保持默认关闭（算法层QA §7.2 P0-B）"
+  },
+  "selection": [
+    {
+      "axis": "candidate_top_k",
+      "chosen": {
+        "candidate_top_k": 10
+      },
+      "variants": [
+        {
+          "metrics": {
+            "citation_document_precision": 0.0,
+            "citation_validity": 0.0,
+            "evidence_precision": 0.47,
+            "evidence_recall": 0.9444444444444444,
+            "hit@1": 0.7666666666666667,
+            "hit@10": 1.0,
+            "hit@3": 1.0,
+            "hit@5": 1.0,
+            "mrr@10": 0.8777777777777778,
+            "ndcg@10": 0.8711427059406409,
+            "queries": 30,
+            "recall@1": 0.42777777777777776,
+            "recall@10": 0.9444444444444444,
+            "recall@3": 0.9111111111111111,
+            "recall@5": 0.9444444444444444
+          },
+          "overrides": {
+            "candidate_top_k": 10
+          }
+        },
+        {
+          "metrics": {
+            "citation_document_precision": 0.0,
+            "citation_validity": 0.0,
+            "evidence_precision": 0.3794444444444444,
+            "evidence_recall": 0.8666666666666667,
+            "hit@1": 0.8333333333333334,
+            "hit@10": 0.9666666666666667,
+            "hit@3": 0.9333333333333333,
+            "hit@5": 0.9666666666666667,
+            "mrr@10": 0.8861111111111111,
+            "ndcg@10": 0.8354781901521858,
+            "queries": 30,
+            "recall@1": 0.5055555555555555,
+            "recall@10": 0.8666666666666667,
+            "recall@3": 0.7777777777777778,
+            "recall@5": 0.8666666666666667
+          },
+          "overrides": {
+            "candidate_top_k": 30
+          }
+        },
+        {
+          "metrics": {
+            "citation_document_precision": 0.0,
+            "citation_validity": 0.0,
+            "evidence_precision": 0.3522222222222222,
+            "evidence_recall": 0.8222222222222222,
+            "hit@1": 0.8333333333333334,
+            "hit@10": 0.9333333333333333,
+            "hit@3": 0.9,
+            "hit@5": 0.9333333333333333,
+            "mrr@10": 0.8733333333333333,
+            "ndcg@10": 0.8117575985496567,
+            "queries": 30,
+            "recall@1": 0.5,
+            "recall@10": 0.8222222222222222,
+            "recall@3": 0.7833333333333333,
+            "recall@5": 0.8222222222222222
+          },
+          "overrides": {
+            "candidate_top_k": 50
+          }
+        },
+        {
+          "metrics": {
+            "citation_document_precision": 0.0,
+            "citation_validity": 0.0,
+            "evidence_precision": 0.37833333333333335,
+            "evidence_recall": 0.8888888888888888,
+            "hit@1": 0.8333333333333334,
+            "hit@10": 0.9333333333333333,
+            "hit@3": 0.9333333333333333,
+            "hit@5": 0.9333333333333333,
+            "mrr@10": 0.8777777777777778,
+            "ndcg@10": 0.8561730916046782,
+            "queries": 30,
+            "recall@1": 0.5,
+            "recall@10": 0.8888888888888888,
+            "recall@3": 0.8722222222222222,
+            "recall@5": 0.8888888888888888
+          },
+          "overrides": {
+            "candidate_top_k": 100
+          }
+        }
+      ]
+    },
+    {
+      "axis": "top_k",
+      "chosen": {
+        "top_k": 10
+      },
+      "variants": [
+        {
+          "metrics": {
+            "citation_document_precision": 0.0,
+            "citation_validity": 0.0,
+            "evidence_precision": 0.5444444444444444,
+            "evidence_recall": 0.7777777777777778,
+            "hit@1": 0.8333333333333334,
+            "hit@10": 0.9333333333333333,
+            "hit@3": 0.9333333333333333,
+            "hit@5": 0.9333333333333333,
+            "mrr@10": 0.8777777777777778,
+            "ndcg@10": 0.7871413266203512,
+            "queries": 30,
+            "recall@1": 0.5055555555555555,
+            "recall@10": 0.7777777777777778,
+            "recall@3": 0.7777777777777778,
+            "recall@5": 0.7777777777777778
+          },
+          "overrides": {
+            "top_k": 3
+          }
+        },
+        {
+          "metrics": {
+            "citation_document_precision": 0.0,
+            "citation_validity": 0.0,
+            "evidence_precision": 0.3794444444444444,
+            "evidence_recall": 0.8666666666666667,
+            "hit@1": 0.8333333333333334,
+            "hit@10": 0.9666666666666667,
+            "hit@3": 0.9333333333333333,
+            "hit@5": 0.9666666666666667,
+            "mrr@10": 0.8861111111111111,
+            "ndcg@10": 0.8354781901521858,
+            "queries": 30,
+            "recall@1": 0.5055555555555555,
+            "recall@10": 0.8666666666666667,
+            "recall@3": 0.7777777777777778,
+            "recall@5": 0.8666666666666667
+          },
+          "overrides": {
+            "top_k": 5
+          }
+        },
+        {
+          "metrics": {
+            "citation_document_precision": 0.0,
+            "citation_validity": 0.0,
+            "evidence_precision": 0.21755291005291005,
+            "evidence_recall": 0.9444444444444444,
+            "hit@1": 0.8333333333333334,
+            "hit@10": 1.0,
+            "hit@3": 0.9333333333333333,
+            "hit@5": 0.9666666666666667,
+            "mrr@10": 0.8916666666666667,
+            "ndcg@10": 0.8658262644962313,
+            "queries": 30,
+            "recall@1": 0.5055555555555555,
+            "recall@10": 0.9444444444444444,
+            "recall@3": 0.7777777777777778,
+            "recall@5": 0.8666666666666667
+          },
+          "overrides": {
+            "top_k": 10
+          }
+        }
+      ]
+    },
+    {
+      "axis": "similarity_threshold",
+      "chosen": {
+        "similarity_threshold": 0.2
+      },
+      "variants": [
+        {
+          "metrics": {
+            "citation_document_precision": 0.0,
+            "citation_validity": 0.0,
+            "evidence_precision": 0.37277777777777776,
+            "evidence_recall": 0.8555555555555555,
+            "hit@1": 0.8333333333333334,
+            "hit@10": 0.9666666666666667,
+            "hit@3": 0.9333333333333333,
+            "hit@5": 0.9666666666666667,
+            "mrr@10": 0.8861111111111111,
+            "ndcg@10": 0.8256087931199904,
+            "queries": 30,
+            "recall@1": 0.5055555555555555,
+            "recall@10": 0.8555555555555555,
+            "recall@3": 0.7666666666666666,
+            "recall@5": 0.8555555555555555
+          },
+          "overrides": {
+            "similarity_threshold": 0.0
+          }
+        },
+        {
+          "metrics": {
+            "citation_document_precision": 0.0,
+            "citation_validity": 0.0,
+            "evidence_precision": 0.37277777777777776,
+            "evidence_recall": 0.8555555555555555,
+            "hit@1": 0.8333333333333334,
+            "hit@10": 0.9666666666666667,
+            "hit@3": 0.9333333333333333,
+            "hit@5": 0.9666666666666667,
+            "mrr@10": 0.8861111111111111,
+            "ndcg@10": 0.8256087931199904,
+            "queries": 30,
+            "recall@1": 0.5055555555555555,
+            "recall@10": 0.8555555555555555,
+            "recall@3": 0.7666666666666666,
+            "recall@5": 0.8555555555555555
+          },
+          "overrides": {
+            "similarity_threshold": 0.05
+          }
+        },
+        {
+          "metrics": {
+            "citation_document_precision": 0.0,
+            "citation_validity": 0.0,
+            "evidence_precision": 0.3794444444444444,
+            "evidence_recall": 0.8666666666666667,
+            "hit@1": 0.8333333333333334,
+            "hit@10": 0.9666666666666667,
+            "hit@3": 0.9333333333333333,
+            "hit@5": 0.9666666666666667,
+            "mrr@10": 0.8861111111111111,
+            "ndcg@10": 0.8354781901521858,
+            "queries": 30,
+            "recall@1": 0.5055555555555555,
+            "recall@10": 0.8666666666666667,
+            "recall@3": 0.7777777777777778,
+            "recall@5": 0.8666666666666667
+          },
+          "overrides": {
+            "similarity_threshold": 0.1
+          }
+        },
+        {
+          "metrics": {
+            "citation_document_precision": 0.0,
+            "citation_validity": 0.0,
+            "evidence_precision": 0.385,
+            "evidence_recall": 0.8944444444444445,
+            "hit@1": 0.7666666666666667,
+            "hit@10": 0.9666666666666667,
+            "hit@3": 0.9333333333333333,
+            "hit@5": 0.9666666666666667,
+            "mrr@10": 0.8527777777777777,
+            "ndcg@10": 0.840726764620858,
+            "queries": 30,
+            "recall@1": 0.4722222222222222,
+            "recall@10": 0.8944444444444445,
+            "recall@3": 0.8277777777777777,
+            "recall@5": 0.8944444444444445
+          },
+          "overrides": {
+            "similarity_threshold": 0.2
+          }
+        }
+      ]
+    },
+    {
+      "axis": "vector_weight",
+      "chosen": {
+        "vector_weight": 0.75
+      },
+      "variants": [
+        {
+          "metrics": {
+            "citation_document_precision": 0.0,
+            "citation_validity": 0.0,
+            "evidence_precision": 0.3661111111111111,
+            "evidence_recall": 0.8444444444444444,
+            "hit@1": 0.8333333333333334,
+            "hit@10": 0.9666666666666667,
+            "hit@3": 0.9333333333333333,
+            "hit@5": 0.9666666666666667,
+            "mrr@10": 0.8861111111111111,
+            "ndcg@10": 0.8177874810196111,
+            "queries": 30,
+            "recall@1": 0.5055555555555555,
+            "recall@10": 0.8444444444444444,
+            "recall@3": 0.7555555555555555,
+            "recall@5": 0.8444444444444444
+          },
+          "overrides": {
+            "vector_weight": 0.5
+          }
+        },
+        {
+          "metrics": {
+            "citation_document_precision": 0.0,
+            "citation_validity": 0.0,
+            "evidence_precision": 0.37277777777777776,
+            "evidence_recall": 0.8555555555555555,
+            "hit@1": 0.8333333333333334,
+            "hit@10": 0.9666666666666667,
+            "hit@3": 0.9333333333333333,
+            "hit@5": 0.9666666666666667,
+            "mrr@10": 0.8861111111111111,
+            "ndcg@10": 0.8283423965172464,
+            "queries": 30,
+            "recall@1": 0.5055555555555555,
+            "recall@10": 0.8555555555555555,
+            "recall@3": 0.7666666666666666,
+            "recall@5": 0.8555555555555555
+          },
+          "overrides": {
+            "vector_weight": 0.6
+          }
+        },
+        {
+          "metrics": {
+            "citation_document_precision": 0.0,
+            "citation_validity": 0.0,
+            "evidence_precision": 0.3794444444444444,
+            "evidence_recall": 0.8666666666666667,
+            "hit@1": 0.8333333333333334,
+            "hit@10": 0.9666666666666667,
+            "hit@3": 0.9333333333333333,
+            "hit@5": 0.9666666666666667,
+            "mrr@10": 0.8861111111111111,
+            "ndcg@10": 0.8343937896018248,
+            "queries": 30,
+            "recall@1": 0.5055555555555555,
+            "recall@10": 0.8666666666666667,
+            "recall@3": 0.7666666666666666,
+            "recall@5": 0.8666666666666667
+          },
+          "overrides": {
+            "vector_weight": 0.7
+          }
+        },
+        {
+          "metrics": {
+            "citation_document_precision": 0.0,
+            "citation_validity": 0.0,
+            "evidence_precision": 0.3794444444444444,
+            "evidence_recall": 0.8666666666666667,
+            "hit@1": 0.8333333333333334,
+            "hit@10": 0.9666666666666667,
+            "hit@3": 0.9333333333333333,
+            "hit@5": 0.9666666666666667,
+            "mrr@10": 0.8861111111111111,
+            "ndcg@10": 0.8354781901521858,
+            "queries": 30,
+            "recall@1": 0.5055555555555555,
+            "recall@10": 0.8666666666666667,
+            "recall@3": 0.7777777777777778,
+            "recall@5": 0.8666666666666667
+          },
+          "overrides": {
+            "vector_weight": 0.75
+          }
+        },
+        {
+          "metrics": {
+            "citation_document_precision": 0.0,
+            "citation_validity": 0.0,
+            "evidence_precision": 0.3794444444444444,
+            "evidence_recall": 0.8666666666666667,
+            "hit@1": 0.8333333333333334,
+            "hit@10": 0.9666666666666667,
+            "hit@3": 0.9333333333333333,
+            "hit@5": 0.9666666666666667,
+            "mrr@10": 0.8861111111111111,
+            "ndcg@10": 0.8354781901521858,
+            "queries": 30,
+            "recall@1": 0.5055555555555555,
+            "recall@10": 0.8666666666666667,
+            "recall@3": 0.7777777777777778,
+            "recall@5": 0.8666666666666667
+          },
+          "overrides": {
+            "vector_weight": 0.8
+          }
+        },
+        {
+          "metrics": {
+            "citation_document_precision": 0.0,
+            "citation_validity": 0.0,
+            "evidence_precision": 0.3794444444444444,
+            "evidence_recall": 0.8666666666666667,
+            "hit@1": 0.8333333333333334,
+            "hit@10": 0.9666666666666667,
+            "hit@3": 0.9333333333333333,
+            "hit@5": 0.9666666666666667,
+            "mrr@10": 0.8861111111111111,
+            "ndcg@10": 0.8354781901521858,
+            "queries": 30,
+            "recall@1": 0.5055555555555555,
+            "recall@10": 0.8666666666666667,
+            "recall@3": 0.7777777777777778,
+            "recall@5": 0.8666666666666667
+          },
+          "overrides": {
+            "vector_weight": 0.9
+          }
+        }
+      ]
+    },
+    {
+      "axis": "rerank",
+      "chosen": {
+        "rerank_backend": "rule",
+        "rerank_enabled": true,
+        "rerank_top_n": 10
+      },
+      "variants": [
+        {
+          "metrics": {
+            "citation_document_precision": 0.0,
+            "citation_validity": 0.0,
+            "evidence_precision": 0.4888888888888889,
+            "evidence_recall": 0.9222222222222223,
+            "hit@1": 0.7666666666666667,
+            "hit@10": 0.9333333333333333,
+            "hit@3": 0.9333333333333333,
+            "hit@5": 0.9333333333333333,
+            "mrr@10": 0.85,
+            "ndcg@10": 0.8599811111871212,
+            "queries": 30,
+            "recall@1": 0.42777777777777776,
+            "recall@10": 0.9222222222222223,
+            "recall@3": 0.8888888888888888,
+            "recall@5": 0.9222222222222223
+          },
+          "overrides": {
+            "rerank_backend": "rule",
+            "rerank_enabled": true,
+            "rerank_top_n": 10
+          }
+        },
+        {
+          "metrics": {
+            "citation_document_precision": 0.0,
+            "citation_validity": 0.0,
+            "evidence_precision": 0.39055555555555554,
+            "evidence_recall": 0.9055555555555556,
+            "hit@1": 0.8,
+            "hit@10": 0.9666666666666667,
+            "hit@3": 0.9333333333333333,
+            "hit@5": 0.9666666666666667,
+            "mrr@10": 0.8694444444444445,
+            "ndcg@10": 0.8509631587708676,
+            "queries": 30,
+            "recall@1": 0.47777777777777775,
+            "recall@10": 0.9055555555555556,
+            "recall@3": 0.8333333333333334,
+            "recall@5": 0.9055555555555556
+          },
+          "overrides": {
+            "rerank_backend": "rule",
+            "rerank_enabled": true,
+            "rerank_top_n": 20
+          }
+        },
+        {
+          "metrics": {
+            "citation_document_precision": 0.0,
+            "citation_validity": 0.0,
+            "evidence_precision": 0.385,
+            "evidence_recall": 0.8944444444444445,
+            "hit@1": 0.7666666666666667,
+            "hit@10": 0.9333333333333333,
+            "hit@3": 0.9333333333333333,
+            "hit@5": 0.9333333333333333,
+            "mrr@10": 0.8444444444444444,
+            "ndcg@10": 0.8390144753072528,
+            "queries": 30,
+            "recall@1": 0.4666666666666667,
+            "recall@10": 0.8944444444444445,
+            "recall@3": 0.8277777777777777,
+            "recall@5": 0.8944444444444445
+          },
+          "overrides": {
+            "rerank_backend": "rule",
+            "rerank_enabled": true,
+            "rerank_top_n": 30
+          }
+        }
+      ]
+    }
+  ],
+  "split": "dev"
+}

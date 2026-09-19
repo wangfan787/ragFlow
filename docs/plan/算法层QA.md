@@ -529,7 +529,7 @@ trace.usage:
 | 离线评测基础设施 | CRUD-RAG Mini 1,000 文档/150 问题、确定性 validator/scorer/report 已完成并验证可复现 | 真实 run 由剩余 P0-B 生成 |
 | 生产评测接口 | `retrieval_mode`、`rerank_top_n`、请求级 `QAConfig`、请求级 config/timings/usage Trace 已实现并测试 | Runner 只负责编排与录制，不再复制算法 |
 
-### 7.2 两个 P0 工作包：P0-A 已实现（2026-09-19），P0-B 待实现
+### 7.2 两个 P0 工作包：均已实现（2026-09-19）
 
 #### P0-A：Markdown 图片/VLM 最小闭环 —— √ 已实现并回归验证
 
@@ -550,14 +550,22 @@ trace.usage:
 
 剩余归 P1：真实 VLM 模型（`MVP_VISION_LLM_*`）联调、线上伴随图片上传通道；HTML/PDF 图片与 OCR 维持不做。
 
-#### P0-B：生产 Runner、baseline 与一次参数锁定
+#### P0-B：生产 Runner、baseline 与一次参数锁定 —— Runner 已实现，真实全量 run 待执行
 
 - `evaluation/runner` 只调用生产 `IngestionPipeline/HybridRouter/QAService`；
+  → `production_adapter.build_stack()` 组装共享评测 store 的生产组件，`run_retrieval` 不调 Chat，`run_qa` 走完整生产链路；Runner 不复制任何算法。
 - 建独立评测索引和 index manifest，保存 dataset/Git/config/model/profile 指纹；
+  → `index_dataset.py` 写独立索引 + `indexes/*.index_manifest.json`，CRUD 原始 doc_id 原样保留，逐文档失败显式记录。
 - 录制 Vector、Hybrid Weighted Sum、Hybrid+Rerank，以及 child/window/full-parent 的真实 run；
+  → `DEFAULT_RETRIEVAL_VARIANTS`（vector/keyword/hybrid/hybrid_rerank）与 `DEFAULT_QA_VARIANTS`（三种 evidence mode）；run 行内嵌 dataset/Git/config/model 指纹与请求级 timings/usage。
 - 只在 Dev 扫 `candidate_top_k/top_k/threshold/vector_weight/rerank_top_n/evidence_window_tokens`，避免无边界组合；
+  → `sweep.py` 单变量轴扫描（检索层不调 Chat；证据层含 window tokens，仅 Dev），越界组合在锁定前钳制。
 - 锁定后在 Test 各运行一次，生成机器可读 score、Markdown 报告和失败案例；
+  → 锁定产物 `evaluation/locks/locked_config.json` + `sweep_summary.md`；run 自动产出 `scores/*.json` 与 `reports/generated/*.md`（复用 E0 scorer/report）。Test 执行为剩余动作。
 - Rerank 无稳定收益则保持默认关闭；Weighted Sum 未暴露刻度问题则不实现 RRF。
+  → `decide_rerank()`：recall@10 增益 ≥ 1pp 且 mrr@10 不下降才默认开启，否则锁定配置剥离 rerank 覆盖。
+
+验证：`evaluation/tests/test_runner.py` 8 项（替身 store/embedding/chat）覆盖 manifest、run schema、no_evidence 映射、扫描锁定与 rerank 规则；另用真实 ES + embedding 完成 20 篇索引与 dev 检索 smoke（`rag-eval-smoke` 索引，212 条记录）。剩余为执行项：全量 1,000 篇索引 → Dev 扫描锁定 → Test 各运行一次，命令见 `evaluation/README.md`。
 
 ### 7.3 P1：P0 稳定后再做
 

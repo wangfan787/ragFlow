@@ -182,6 +182,12 @@ class QAService:
             "prompt_used_tokens": count_message_tokens(self._evidence_messages(question, accepted)),
             "evidence_count": len(accepted),
             "dropped_chunk_ids": dropped,
+            # 实际进入 Prompt 的证据文档（去重保序）；评测 Runner 原样录制
+            "evidence_doc_ids": list(dict.fromkeys(
+                str(chunk.metadata["doc_id"])
+                for chunk in accepted
+                if chunk.metadata.get("doc_id")
+            )),
         }
         return accepted, budget_trace
 

@@ -63,7 +63,7 @@
 | Markdown 图片/VLM | √ 已实现并回归验证（P0-A） | `AssetFileStore` 按 SHA256 去重保存且读取前校验路径边界；`AssetRegistry` 用 asset_id+document_id+owner 单条 JOIN 鉴权；`ImageDescriber` 输出受 schema 约束 JSON 并程序拼装可检索文本；VLM 失败保留资产与 failed 状态、非法引用保留 skipped 占位；image 为原子块且 `asset_id` 透传到 Citation；`/assets/preview` 二次鉴权。权限/穿越/重复/失效均有测试 | `P1`：真实 VLM 模型联调、线上伴随图片上传通道；HTML/PDF 图片与 OCR 维持不做 |
 | 父子分块与 Embedding | √ 已实现并回归验证 | Parent/Child 硬 token 上限、内容逐字守恒、坐标投影、稳定 profile hash、只嵌 Child 正文、向量数量/维度/NaN/零向量校验均有测试 | `P2（条件触发）`：只有失败集证明必要时才增加 profile 或比较输入模板，不预建多套方案 |
 | ES 索引与重入库 | √ 已实现 | Parent 保存上下文、Child 保存向量；先 upsert 再清理陈旧 ID；记录 index/schema/model/profile 信息 | `P2`：需要真实发布迁移时再做蓝绿索引、双写和回滚 |
-| Hybrid 检索与 Rerank | △ 主链已实现，效果待真实评测 | 向量/BM25、Weighted Sum、父块聚合、规则/Cross-Encoder Rerank 均已编码；`retrieval_mode` 严格门控、`rerank_top_n` 漏斗、失败回退和请求级 Trace 已测试 | **剩余算法 P0-B（统一评测包）**：生产 Runner 录制 Vector/Hybrid/Rerank off-on baseline，只在 Dev 扫 TopK/阈值/权重并锁定配置；元数据增强、并行/隔离放 `P1`，Weighted RRF 仅失败触发 `P2` |
+| Hybrid 检索与 Rerank | △ 主链已实现，Runner 已就绪，待真实全量 run | 向量/BM25、Weighted Sum、父块聚合、规则/Cross-Encoder Rerank 均已编码；`retrieval_mode` 严格门控、`rerank_top_n` 漏斗、失败回退和请求级 Trace 已测试；`evaluation/runner`（index_dataset/run_retrieval/run_qa/sweep）只调用生产 `IngestionPipeline/HybridRouter/QAService`，run 记录 dataset/Git/config/model 指纹，替身测试 8 项通过，且已用真实 ES+embedding 完成 20 篇 smoke | **剩余算法 P0-B（执行）**：跑全量 1,000 篇索引与 Dev/Test baseline、执行 Dev 扫描并锁定；元数据增强、并行/隔离放 `P1`，Weighted RRF 仅失败触发 `P2` |
 | Evidence、回答与引用 | √ 已实现并回归验证 | 父块恢复、锚定窗口、child/window/full-parent 请求级配置、Prompt 总预算、证据约束回答、引用范围校验及文档级 Citation scorer 已实现 | 窗口默认值并入同一个 **P0-B** Dev 扫描，不再单列 P0；`no_evidence` 产品协议归后端 P0，claim-level Correctness/Coverage 归 `P1` Judge |
 | 知识图谱、联网搜索、Agent/MCP | × 暂不实现 | 当前单轮 RAG 主线不依赖这些能力 | `P2`：只有多跳、时效性或工具调用失败形成稳定业务类别时再立项 |
 
@@ -71,10 +71,10 @@
 
 已完成且不再计入待办：统一解析迁移、来源精度分级与最小回归、父子分块/Embedding 不变量、离线数据集与 scorer，以及 §4.2 的四项生产评测接口。2026-09-19 在 Conda `agent` 环境重跑 `backend/tests + evaluation/tests`：`102 passed`。
 
-算法层只保留两个 P0 工作包：
+算法层的两个 P0 工作包已于 2026-09-19 完成编码并回归（Conda `agent` 环境，`backend/tests + evaluation/tests` 共 `131 passed`）：
 
-1. **P0-A Markdown 图片/VLM 最小闭环**：图片资产、描述、原子分块、索引和鉴权引用预览一次打通。
-2. **P0-B 生产 Runner 与真实 baseline**：同一个 Runner 完成 Vector/Hybrid/Rerank/evidence mode 对比和 Dev 参数扫描，锁定后在 Test 运行一次；TopK、阈值、融合权重、Rerank 和证据窗口不再拆成五个重复 P0。
+1. **P0-A Markdown 图片/VLM 最小闭环**：已实现。资产保存/归属鉴权/VLM 描述/原子 image block/`asset_id` 透传/鉴权预览全部打通并有验收测试；真实 VLM 模型联调归 P1。
+2. **P0-B 生产 Runner 与真实 baseline**：Runner 已实现并测试（含真实 ES + embedding 的 20 篇 smoke）。剩余为执行项：全量索引、Dev 扫描锁定与 Test 各运行一次，产出正式 baseline 报告；执行命令见 `evaluation/README.md`。
 
 ### 4.2 已完成：生产评测接入的四个前置改造
 
@@ -265,7 +265,7 @@ CI 只运行稳定且确定性的快速指标；需要真实模型或 LLM Judge 
 
 1. **后端产品闭环**：挂载 QA API，统一状态码与 `no_evidence`，补齐文档 UUID/状态/source/delete/retry 和必要的 API 集成测试。
 2. **算法 P0-A**：√ 已完成（2026-09-19）；真实 VLM 模型联调与伴随图片上传通道归 P1。
-3. **算法 P0-B / 评测 E1**：接入只调用生产代码的 Runner，产出 Vector、Hybrid Weighted Sum、Rerank off/on 和 evidence mode baseline；仅在 Dev 扫 TopK/阈值/权重/窗口，锁定后在 Test 比较。
+3. **算法 P0-B / 评测 E1**：Runner 已完成并通过测试；剩余为执行全量索引、Dev 扫描锁定与 Test baseline 运行（命令见 `evaluation/README.md`）。
 4. **最小前端闭环**：上传、入库状态、问答、答案、引用及原文/图片预览。
 
 P0 验收：

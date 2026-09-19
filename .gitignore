@@ -31,6 +31,7 @@ evaluation/runs/
 evaluation/scores/
 evaluation/reports/generated/
 evaluation/failures/generated/
+evaluation/indexes/
 
 # Generated local test reports and editor scratch files.
 backend/tests/tempCodeRunnerFile.py

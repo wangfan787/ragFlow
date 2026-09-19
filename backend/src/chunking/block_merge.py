@@ -184,8 +184,13 @@ class BlockMergeStrategy:
 
         for atom in atoms:
             block_type = atom["block_type"]
-            preserve = (block_type == "code" and config.preserve_code_block) or (
-                block_type == "table" and config.preserve_table_block
+            # 图片块无条件原子（一图一块，不与相邻块合并）；超长的 VLM 描述
+            # 仍由 _atomic_fragments 按 token 硬上限切分——切的是描述文字，
+            # 不是图片本身（算法层QA Q6）。
+            preserve = (
+                (block_type == "code" and config.preserve_code_block)
+                or (block_type == "table" and config.preserve_table_block)
+                or block_type == "image"
             )
             if (
                 (config.align_to_boundary and block_type in _PARENT_BOUNDARY_TYPES) or preserve

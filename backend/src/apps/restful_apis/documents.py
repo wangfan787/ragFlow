@@ -13,9 +13,14 @@ class IngestRequest(BaseModel):
 
 @router.post("/documents")
 async def upload_document(request: Request,file:UploadFile = File(...)) ->dict:
-    require_authenticated(request)
+    claims = require_authenticated(request)
     payload = await file.read()
-    data = service.upload_file(file_name=file.filename or "",content_type=file.content_type,content=payload)
+    data = service.upload_file(
+        file_name=file.filename or "",
+        content_type=file.content_type,
+        content=payload,
+        owner_id=str(claims.get("sub") or "") or None,
+    )
     return ok(data)
 
 @router.get("/documents")

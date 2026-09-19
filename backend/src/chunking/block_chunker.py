@@ -10,6 +10,14 @@ from backend.src.chunking.block_merge import BlockMergeStrategy
 from backend.src.chunking.chunk_config import ChunkConfig, build_chunk_config
 from backend.src.chunking.token_counter import SimpleTokenCounter
 
+# image block 的专属元数据按值透传到检索块（P0-A：asset_id 必须能到达
+# Citation）。只有源块携带时才写入，普通文本块不新增空键。
+_PASSTHROUGH_METADATA_KEYS = (
+    "asset_id", "storage_key", "mime_type", "alt_text", "caption",
+    "description_status", "skip_reason", "vlm_model", "vlm_prompt_version",
+    "size_bytes",
+)
+
 
 class BlockChunker:
     """把解析块转换为带父子关系和来源信息的检索块。"""
@@ -99,9 +107,7 @@ class BlockChunker:
             span = self._child_span(item) if role == "child" else self._merge_span(
                 [block.metadata.get("source_span") for block in blocks]
             )
-            documents.append(Document(
-                page_content=text,
-                metadata={
+            metadata = {
                     "chunk_id": chunk_id, "doc_id": chunk_doc_id,
                     "doc_name": first.get("doc_name", ""),
                     "section_path": list(first.get("section_path", [])),
@@ -120,6 +126,10 @@ class BlockChunker:
                     "token_count": self._counter.count(text),
                     "trace": {key: value for key, value in item.get("trace", {}).items() if key != "chunk_role"},
                     "embedding_input_budget": config.embedding_input_budget,
-                },
-            ))
+            }
+            for key in _PASSTHROUGH_METADATA_KEYS:
+                value = first.get(key)
+                if value is not None:
+                    metadata[key] = value
+            documents.append(Document(page_content=text, metadata=metadata))
         return documents

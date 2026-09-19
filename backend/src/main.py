@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from backend.src.apps.restful_apis.assets import router as assets_router
 from backend.src.apps.restful_apis.auth import router as auth_router
 from backend.src.apps.restful_apis.documents import router as documents_router
 from backend.src.apps.services.common_service import (
@@ -78,6 +79,7 @@ def create_app() -> FastAPI:
 
     app.include_router(auth_router, prefix="")
     app.include_router(documents_router, prefix="")
+    app.include_router(assets_router, prefix="")
     # QA 路由待阶段 07 按最终 API 挂载。
     return app
 

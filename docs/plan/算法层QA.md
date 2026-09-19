@@ -529,16 +529,26 @@ trace.usage:
 | 离线评测基础设施 | CRUD-RAG Mini 1,000 文档/150 问题、确定性 validator/scorer/report 已完成并验证可复现 | 真实 run 由剩余 P0-B 生成 |
 | 生产评测接口 | `retrieval_mode`、`rerank_top_n`、请求级 `QAConfig`、请求级 config/timings/usage Trace 已实现并测试 | Runner 只负责编排与录制，不再复制算法 |
 
-### 7.2 剩余算法 P0：只有两个工作包
+### 7.2 两个 P0 工作包：P0-A 已实现（2026-09-19），P0-B 待实现
 
-#### P0-A：Markdown 图片/VLM 最小闭环
+#### P0-A：Markdown 图片/VLM 最小闭环 —— √ 已实现并回归验证
+
+要求与落实情况：
 
 - 只支持 Markdown 相对路径本地 PNG/JPEG/WebP，不顺带实现 HTML/PDF 图片或 OCR；
+  → `backend/src/parsing/markdown_images.py`：URL/绝对路径/`..` 穿越/不支持类型/缺文件全部显式 skipped 并带原因，围栏代码块中的图片语法不计。
 - 资产读取必须基于 `document_id/asset_id/current_user_id` 鉴权，拒绝任意路径和 `..` 穿越；
+  → `backend/src/assets/asset_store.py`：`AssetRegistry.authorized_asset()` 单条 JOIN 同时校验资源、文档归属与 owner；`AssetFileStore` 的 storage_key 读取前确认仍在资产根目录内。
 - 原图按 SHA256 保存，VLM 只生成受 schema 约束的描述文字；
+  → `AssetFileStore.save()` 幂等去重；`vlm_describer.py` 要求 JSON（ocr_text/subjects/key_facts/chart_trends/uncertainties）并程序拼装 `page_content`。
 - image 作为原子 block，描述进入分块/Embedding，`asset_id/document_id` 透传到 Citation；
+  → `BlockMergeStrategy` 无条件 preserve image；`BlockChunker` 透传 `asset_id` 等键；`CitationService` 与 `HybridRouter.matched_children` 携带 `asset_id`。
 - 预览再次鉴权；VLM 失败保留资产和失败状态，不伪造描述；
-- 验收有权限、无权限、路径穿越、重复图片和失效资源。
+  → `GET /assets/preview`（`AssetService.preview`）；失败路径在 assets 表记 `failed` 并保留占位正文。
+- 验收有权限、无权限、路径穿越、重复图片和失效资源；
+  → `backend/tests/{parsing/test_markdown_images, chunking/test_image_blocks, services/test_image_pipeline, services/test_asset_preview}.py` 共 21 项。
+
+剩余归 P1：真实 VLM 模型（`MVP_VISION_LLM_*`）联调、线上伴随图片上传通道；HTML/PDF 图片与 OCR 维持不做。
 
 #### P0-B：生产 Runner、baseline 与一次参数锁定
 

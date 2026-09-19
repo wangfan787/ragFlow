@@ -69,6 +69,10 @@ class ElasticsearchStore:
             "chunk_profile_version": {"type": "keyword"},
             "chunk_profile_hash": {"type": "keyword"},
             "index_schema_version": {"type": "keyword"},
+            # image block 资产字段（P0-A）；普通文本块不写这些键
+            "asset_id": {"type": "keyword"},
+            "mime_type": {"type": "keyword"},
+            "description_status": {"type": "keyword"},
         }
 
     def _ensure_index(self, dimension: int) -> str:

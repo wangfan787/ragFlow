@@ -60,7 +60,7 @@
 |---|---|---|---|
 | 文本解析（md/pdf/html/txt） | √ 已实现并回归验证 | `UnstructuredParser` 统一四种格式；PDF 依赖按需加载并规避只读 Numba 缓存；Markdown/HTML/TXT/PDF、嵌套代码、表格文本、非法 UTF-8 均有测试 | `P1`：补部署 bootstrap 与冷/热耗时；`P2`：失败数据触发后再做 OCR、hi_res、复杂表格结构恢复 |
 | Document 与来源追踪 | √ 已实现并回归验证 | 全链路使用 `Document(page_content, metadata)`；`exact/line_only/unavailable` 精度分级、重复文本单调回定位、HTML 实体和 Child 坐标投影已有回归 | `P1`：清理无消费者字段、形成 20–30 篇精度分布报告；不再作为算法 P0 |
-| Markdown 图片/VLM | × 未实现 | 已有 Vision 模型配置和数据契约设计 | **剩余算法 P0-A**：完成受控资产读取→原图保存→VLM 描述→原子 image block→索引→鉴权引用预览的最小闭环；不把 HTML/PDF 图片或 OCR 混入首版 |
+| Markdown 图片/VLM | √ 已实现并回归验证（P0-A） | `AssetFileStore` 按 SHA256 去重保存且读取前校验路径边界；`AssetRegistry` 用 asset_id+document_id+owner 单条 JOIN 鉴权；`ImageDescriber` 输出受 schema 约束 JSON 并程序拼装可检索文本；VLM 失败保留资产与 failed 状态、非法引用保留 skipped 占位；image 为原子块且 `asset_id` 透传到 Citation；`/assets/preview` 二次鉴权。权限/穿越/重复/失效均有测试 | `P1`：真实 VLM 模型联调、线上伴随图片上传通道；HTML/PDF 图片与 OCR 维持不做 |
 | 父子分块与 Embedding | √ 已实现并回归验证 | Parent/Child 硬 token 上限、内容逐字守恒、坐标投影、稳定 profile hash、只嵌 Child 正文、向量数量/维度/NaN/零向量校验均有测试 | `P2（条件触发）`：只有失败集证明必要时才增加 profile 或比较输入模板，不预建多套方案 |
 | ES 索引与重入库 | √ 已实现 | Parent 保存上下文、Child 保存向量；先 upsert 再清理陈旧 ID；记录 index/schema/model/profile 信息 | `P2`：需要真实发布迁移时再做蓝绿索引、双写和回滚 |
 | Hybrid 检索与 Rerank | △ 主链已实现，效果待真实评测 | 向量/BM25、Weighted Sum、父块聚合、规则/Cross-Encoder Rerank 均已编码；`retrieval_mode` 严格门控、`rerank_top_n` 漏斗、失败回退和请求级 Trace 已测试 | **剩余算法 P0-B（统一评测包）**：生产 Runner 录制 Vector/Hybrid/Rerank off-on baseline，只在 Dev 扫 TopK/阈值/权重并锁定配置；元数据增强、并行/隔离放 `P1`，Weighted RRF 仅失败触发 `P2` |
@@ -264,7 +264,7 @@ CI 只运行稳定且确定性的快速指标；需要真实模型或 LLM Judge 
 已完成并从待办移除：统一解析迁移与回归、CRUD-RAG Mini 数据/scorer、四项生产评测接口。剩余 P0 按工作包执行，避免算法、后端和前端表格重复计数：
 
 1. **后端产品闭环**：挂载 QA API，统一状态码与 `no_evidence`，补齐文档 UUID/状态/source/delete/retry 和必要的 API 集成测试。
-2. **算法 P0-A**：Markdown 图片资产、VLM 描述、原子分块、索引和鉴权引用预览。
+2. **算法 P0-A**：√ 已完成（2026-09-19）；真实 VLM 模型联调与伴随图片上传通道归 P1。
 3. **算法 P0-B / 评测 E1**：接入只调用生产代码的 Runner，产出 Vector、Hybrid Weighted Sum、Rerank off/on 和 evidence mode baseline；仅在 Dev 扫 TopK/阈值/权重/窗口，锁定后在 Test 比较。
 4. **最小前端闭环**：上传、入库状态、问答、答案、引用及原文/图片预览。
 

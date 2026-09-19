@@ -87,8 +87,9 @@ class HybridRouter:
             def mean(field: str) -> float:
                 return sum(float(row.get(field, 0.0) or 0.0) for row in members) / len(members)
 
-            matched_children = [
-                {
+            matched_children = []
+            for row in members:
+                entry = {
                     "chunk_id": str(row["chunk_id"]),
                     "score": float(row.get("score", row.get("fused_score", 0.0))),
                     "vector_score": float(row.get("vector_score", 0.0)),
@@ -101,8 +102,9 @@ class HybridRouter:
                     "parent_char_start": row.get("parent_char_start"),
                     "parent_char_end": row.get("parent_char_end"),
                 }
-                for row in members
-            ]
+                if row.get("asset_id") is not None:  # image 命中子块透传资产引用
+                    entry["asset_id"] = str(row["asset_id"])
+                matched_children.append(entry)
             family_score = mean("score")
             result = {
                 **primary,
@@ -144,6 +146,8 @@ class HybridRouter:
                         "context_span": dict(parent_payload.get("source_span") or {}),
                         "parent_char_start": None,
                         "parent_char_end": None,
+                        # image 父块（原子图片）保留资产引用；文本父块该键不存在
+                        "asset_id": parent_payload.get("asset_id"),
                     }
                 )
                 expanded_count += 1

@@ -32,6 +32,10 @@ class CitationService:
                 "primary_matched_child_id": metadata.get("primary_matched_child_id") or metadata.get("matched_child_id"),
                 "source_span": dict(metadata.get("source_span") or {}),
             })
+            # image 命中块透传资产引用：前端凭 asset_id 走鉴权预览取原图
+            if metadata.get("asset_id") is not None:
+                citations[-1]["asset_id"] = str(metadata["asset_id"])
+                citations[-1]["description_status"] = metadata.get("description_status")
         average = round(
             sum(chunks[index - 1].metadata["score"] for index in referenced) / len(referenced), 4,
         ) if referenced else 0.0

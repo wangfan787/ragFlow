@@ -43,7 +43,14 @@ class DocumentService:
             {"allowed": sorted(_ALLOWED_EXT)},
         )
 
-    def upload_file(self, file_name: str, content_type: str | None, content: bytes) -> dict:
+    def upload_file(
+        self,
+        file_name: str,
+        content_type: str | None,
+        content: bytes,
+        *,
+        owner_id: str | None = None,
+    ) -> dict:
         clean_name = (file_name or "").strip()
         if not clean_name:
             raise ServiceError("INVALID_FILE_NAME", "file_name 不能为空")
@@ -65,6 +72,8 @@ class DocumentService:
             "file_type": file_type,
             "file_path": str(file_path),
             "status": "PENDING",
+            # 归属权威字段：资产读取（P0-A）按它做 JOIN 鉴权
+            "owner_id": owner_id,
         }
         upsert_document(doc)
         return doc
@@ -92,6 +101,7 @@ class DocumentService:
                     "doc_name": doc["name"],
                 },
                 chunk_config=ChunkConfig(),
+                owner_id=doc.get("owner_id"),
             )
             doc["status"] = "SUCCESS"
             upsert_document(doc)

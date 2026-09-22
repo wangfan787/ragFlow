@@ -1,6 +1,5 @@
 """P0-A：Markdown 本地图片引用提取与 image block 交错的纯文本契约。
 
-验收对应 docs/plan/算法层QA.md §7.2 P0-A：
 - 只接受相对路径本地 PNG/JPEG/WebP；
 - URL / 绝对路径 / `..` 穿越 / 不支持类型 / 缺文件全部显式 skip 并带原因；
 - 围栏代码块中的图片语法不算引用；

@@ -77,6 +77,15 @@ def list_documents() -> list[dict]:
     return [json.loads(row[0]) for row in rows]
 
 
+def delete_document(doc_id: str) -> bool:
+    """
+    删除指定文档记录。返回是否确实删除了记录（doc_id 不存在时返回 False）。
+    """
+    with _connect() as conn:
+        cursor = conn.execute("DELETE FROM documents WHERE doc_id = ?", (str(doc_id),))
+        return cursor.rowcount > 0
+
+
 def chunks_version() -> int:
     """
     返回当前切片版本号。

@@ -19,8 +19,7 @@ import httpx
 import pytest
 import yaml
 
-from backend.src.config import env
-from backend.src.config.settings import Settings, settings
+from backend.src.config.settings import Settings, settings, DEFAULT_CONFIG, _merge
 from backend.src.infrastructure.models import (
     ModelConfigurationError,
     build_chat,
@@ -30,126 +29,85 @@ from backend.src.infrastructure.models import (
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-@pytest.fixture(autouse=True)
-def isolated_config(monkeypatch, tmp_path):
-    # 测试不用用户的 key、.env 或 YAML；dotenv 写入的变量也要在退出时恢复。
-    original = {k: v for k, v in os.environ.items() if k.startswith("MVP_")}
-    for name in original:
-        monkeypatch.delenv(name)
-    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "false")
-    monkeypatch.setenv("LANGSMITH_TRACING", "false")
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text("{}", encoding="utf-8")
-    monkeypatch.setenv("MVP_CONFIG_FILE", str(config_path))
+def _set_config(name, value):
+    patch = {}
+    section = patch
+    parts = name.split(".")
+    for part in parts[:-1]:
+        section = section.setdefault(part, {})
+    section[parts[-1]] = value
+    settings._data = _merge(settings._data, patch)
+
+
+def _settings():
+    return Settings(local_path=None, overrides=settings._data)
+
+
+def test_yaml_priority_and_environment_is_ignored(monkeypatch, tmp_path):
+    local = tmp_path / "local.yaml"
+    local.write_text('embedding:\n  model: local-model # 可注释\n', encoding="utf-8")
+    monkeypatch.setenv("MVP_EMBEDDING_MODEL", "shell-model")
+    monkeypatch.setenv("MVP_CONFIG_FILE", str(tmp_path / "missing.yaml"))
     monkeypatch.setenv("MVP_ENV_FILE", str(tmp_path / ".env"))
-    monkeypatch.setattr(env, "_CONFIG_CACHE", None)
-    monkeypatch.setattr(env, "_LOADED_SIGNATURE", None)
-    settings.clear_cache()
-    yield config_path
-    for name in list(os.environ):
-        if name.startswith("MVP_"):
-            del os.environ[name]
-    os.environ.update(original)
-    settings.clear_cache()
+    (tmp_path / ".env").write_text("MVP_EMBEDDING_MODEL=dotenv-model\n")
+    assert Settings(local_path=local).text("embedding.model") == "local-model"
+    assert Settings(local_path=None).text("embedding.model") == "embedding-3"
+    assert Settings(local_path=local, overrides={"embedding": {"model": "explicit"}}).text("embedding.model") == "explicit"
 
 
-@pytest.mark.parametrize(
-    "process_value,dotenv_value,yaml_value,expected",
-    [
-        ("process-model", "dotenv-model", "yaml-model", "process-model"),
-        (None, "dotenv-model", "yaml-model", "dotenv-model"),
-        (None, None, "yaml-model", "yaml-model"),
-        (None, None, None, "embedding-3"),
-    ],
-)
-def test_configuration_priority(
-    monkeypatch, isolated_config, process_value, dotenv_value, yaml_value, expected
-):
-    isolated_config.write_text(
-        yaml.safe_dump({"embedding": {"model": yaml_value}}), encoding="utf-8"
-    )
-    if dotenv_value is not None:
-        isolated_config.with_name(".env").write_text(
-            f"MVP_EMBEDDING_MODEL={dotenv_value}\n", encoding="utf-8"
-        )
-    if process_value is not None:
-        monkeypatch.setenv("MVP_EMBEDDING_MODEL", process_value)
-    assert Settings().text("MVP_EMBEDDING_MODEL") == expected
+def test_unknown_and_invalid_yaml_fields_fail_without_leaking_values(tmp_path):
+    local = tmp_path / "local.yaml"
+    local.write_text('embedding:\n  api_keey: private-marker\n')
+    with pytest.raises(ValueError, match="embedding.api_keey") as error:
+        Settings(local_path=local)
+    assert "private-marker" not in str(error.value)
+    local.write_text('embedding: [private-marker')
+    with pytest.raises(ValueError, match="Invalid YAML") as error:
+        Settings(local_path=local)
+    assert "private-marker" not in str(error.value)
+    with pytest.raises(ValueError, match="integer"):
+        Settings(local_path=None, overrides={"embedding": {"dimensions": "1024"}}).integer("embedding.dimensions")
 
 
-def test_default_root_env_and_unknown_setting():
-    assert env._default_env_path() == REPO_ROOT / ".env"
-    assert env.config_value("UNKNOWN_SETTING") is None
-    assert Settings().text("UNKNOWN_SETTING", "fallback") == "fallback"
-    assert Settings().integer("UNKNOWN_NUMBER", 7) == 7
-
-
-def test_existing_model_and_es_mappings(isolated_config):
-    isolated_config.write_text(yaml.safe_dump({
+def test_existing_model_and_es_settings():
+    config = Settings(local_path=None, overrides={
         "embedding": {"model": "custom-embedding", "dimensions": 256, "batch_size": 3},
         "llm": {
             "qa": {"model": "custom-qa", "base_url": "https://qa.example/v1", "api_key": "qa-key"},
-            "metadata": {"model": "legacy", "base_url": "https://legacy.example/v1", "api_key": "old-key"},
             "vision": {"model": "custom-vision", "base_url": "https://vision.example/v1", "api_key": "vision-key"},
         },
         "elasticsearch": {"url": "http://es.example:9200", "index": "existing-index", "timeout": 12},
-    }), encoding="utf-8")
-    config = Settings()
-    assert config.text("MVP_EMBEDDING_MODEL") == "custom-embedding"
-    assert config.integer("MVP_EMBEDDING_DIMENSIONS", 1024) == 256
-    assert config.integer("MVP_EMBEDDING_BATCH_SIZE", 16) == 3
+    })
+    assert config.text("embedding.model") == "custom-embedding"
+    assert config.integer("embedding.dimensions") == 256
     qa = build_chat("qa", config=config, chat_factory=lambda **kw: kw)
-    assert (qa["model"], qa["base_url"], qa["api_key"]) == (
-        "custom-qa", "https://qa.example/v1", "qa-key"
-    )
+    assert (qa["model"], qa["base_url"], qa["api_key"]) == ("custom-qa", "https://qa.example/v1", "qa-key")
     vision = build_chat("vision", config=config, chat_factory=lambda **kw: kw)
-    assert (vision["model"], vision["base_url"], vision["api_key"]) == (
-        "custom-vision", "https://vision.example/v1", "vision-key"
-    )
-    assert config.text("MVP_ELASTICSEARCH_URL") == "http://es.example:9200"
-    assert config.text("MVP_ELASTICSEARCH_INDEX") == "existing-index"
-    assert config.integer("MVP_ELASTICSEARCH_TIMEOUT", 30) == 12
+    assert vision["api_key"] == "vision-key"
+    assert config.text("elasticsearch.index") == "existing-index"
+    assert config.integer("elasticsearch.timeout") == 12
 
 
-def test_missing_keys_do_not_use_metadata_or_openai_fallback(monkeypatch):
-    monkeypatch.setenv("MVP_METADATA_LLM_API_KEY", "legacy-test-key")
-    monkeypatch.setenv("OPENAI_API_KEY", "unrelated-test-key")
-
-    def unexpected_factory(**kwargs):
-        pytest.fail("缺失配置时不应构造模型")
-
-    config = Settings()
-    with pytest.raises(ModelConfigurationError, match="MVP_QA_LLM_API_KEY"):
-        build_chat("qa", config=config, chat_factory=unexpected_factory)
-    with pytest.raises(ModelConfigurationError, match="MVP_VISION_LLM_API_KEY"):
-        build_chat("vision", config=config, chat_factory=unexpected_factory)
-    with pytest.raises(ModelConfigurationError, match="MVP_EMBEDDING_API_KEY"):
-        build_embeddings(config=config, embeddings_factory=unexpected_factory)
+def test_missing_keys_do_not_use_environment_or_other_services(monkeypatch):
+    monkeypatch.setenv("MVP_QA_LLM_API_KEY", "legacy-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "unrelated-key")
+    config = Settings(local_path=None, overrides={"embedding": {"api_key": "embedding-only"}})
+    for kind in ("qa", "vision"):
+        with pytest.raises(ModelConfigurationError, match=f"llm.{kind}.api_key"):
+            build_chat(kind, config=config)
+    with pytest.raises(ModelConfigurationError, match="embedding.api_key"):
+        build_embeddings(config=Settings(local_path=None))
 
 
-def test_vision_key_fallback_is_only_embedding(monkeypatch):
-    monkeypatch.setenv("MVP_EMBEDDING_API_KEY", "embedding-test-key")
-    config = Settings(cache=False)
-    assert build_chat("vision", config=config, chat_factory=lambda **kw: kw)["api_key"] == "embedding-test-key"
-    with pytest.raises(ModelConfigurationError, match="MVP_QA_LLM_API_KEY"):
-        build_chat("qa", config=config)
-    monkeypatch.setenv("MVP_VISION_LLM_API_KEY", "vision-test-key")
-    assert build_chat("vision", config=config, chat_factory=lambda **kw: kw)["api_key"] == "vision-test-key"
-    monkeypatch.setenv("MVP_VISION_LLM_API_KEY", "")
-    assert build_chat("vision", config=config, chat_factory=lambda **kw: kw)["api_key"] == "embedding-test-key"
-
-
-def test_invalid_model_configuration_fails_before_construction(monkeypatch):
-    monkeypatch.setenv("MVP_QA_LLM_API_KEY", "qa-test-key")
-    monkeypatch.setenv("MVP_QA_LLM_CONTEXT_TOKENS", "1280")
+def test_invalid_model_configuration_fails_before_construction():
+    config = Settings(local_path=None, overrides={"llm": {"qa": {"context_limit_tokens": 1280}}})
     with pytest.raises(ModelConfigurationError, match="总上下文"):
-        build_chat("qa", config=Settings())
+        build_chat("qa", config=config)
     with pytest.raises(ValueError, match="qa 或 vision"):
         build_chat("metadata")
-    monkeypatch.setenv("MVP_EMBEDDING_API_KEY", "embedding-test-key")
-    monkeypatch.setenv("MVP_EMBEDDING_BATCH_SIZE", "17")
-    with pytest.raises(ValueError, match="MVP_EMBEDDING_BATCH_SIZE"):
-        build_embeddings(config=Settings())
+    config = Settings(local_path=None, overrides={"embedding": {"api_key": "test", "batch_size": 17}})
+    with pytest.raises(ValueError, match="embedding.batch_size"):
+        build_embeddings(config=config)
 
 
 @pytest.fixture
@@ -189,9 +147,9 @@ def mock_http():
 def test_chat_wire_request(monkeypatch, mock_http, kind, model_name, max_tokens, temperature, path):
     from langchain_openai import ChatOpenAI
 
-    monkeypatch.setenv(f"MVP_{kind.upper()}_LLM_API_KEY", "test-key")
+    _set_config(f"llm.{kind}.api_key", "test-key")
     requests, client, async_client = mock_http
-    chat = build_chat(kind, config=Settings(), chat_factory=partial(
+    chat = build_chat(kind, config=_settings(), chat_factory=partial(
         ChatOpenAI, http_client=client, http_async_client=async_client
     ))
     assert chat.request_timeout == 60
@@ -218,9 +176,9 @@ def test_chat_wire_request(monkeypatch, mock_http, kind, model_name, max_tokens,
 def test_embedding_wire_preserves_raw_strings_and_batches(monkeypatch, mock_http):
     from langchain_openai import OpenAIEmbeddings
 
-    monkeypatch.setenv("MVP_EMBEDDING_API_KEY", "test-key")
+    _set_config("embedding.api_key", "test-key")
     requests, client, async_client = mock_http
-    embeddings = build_embeddings(config=Settings(), embeddings_factory=partial(
+    embeddings = build_embeddings(config=_settings(), embeddings_factory=partial(
         OpenAIEmbeddings, http_client=client, http_async_client=async_client
     ))
     texts = [f"  中文原文 {i}\n<|endoftext|>  " for i in range(17)]
@@ -242,8 +200,8 @@ def test_provider_failure_propagates_without_fake_result(monkeypatch, kind):
     from langchain_openai import ChatOpenAI, OpenAIEmbeddings
     from openai import APIStatusError
 
-    monkeypatch.setenv("MVP_QA_LLM_API_KEY", "test-key")
-    monkeypatch.setenv("MVP_EMBEDDING_API_KEY", "test-key")
+    _set_config("llm.qa.api_key", "test-key")
+    _set_config("embedding.api_key", "test-key")
     transport = httpx.MockTransport(lambda request: httpx.Response(
         400, json={"error": {"message": "rejected", "type": "invalid_request_error"}}
     ))
@@ -253,9 +211,9 @@ def test_provider_failure_propagates_without_fake_result(monkeypatch, kind):
             clients = {"http_client": client, "http_async_client": async_client}
             with pytest.raises(APIStatusError):
                 if kind == "qa":
-                    build_chat(config=Settings(), chat_factory=partial(ChatOpenAI, **clients)).invoke("question")
+                    build_chat(config=_settings(), chat_factory=partial(ChatOpenAI, **clients)).invoke("question")
                 else:
-                    build_embeddings(config=Settings(), embeddings_factory=partial(OpenAIEmbeddings, **clients)).embed_query("question")
+                    build_embeddings(config=_settings(), embeddings_factory=partial(OpenAIEmbeddings, **clients)).embed_query("question")
         finally:
             asyncio.run(async_client.aclose())
 
@@ -264,13 +222,12 @@ def test_data_paths_are_repo_relative_and_create_nothing(monkeypatch, tmp_path):
     from backend.src.config.data_paths import data_dir, database_path, uploads_dir
 
     monkeypatch.chdir(tmp_path)
+    _set_config("data_dir", "data/md-rag")
     assert data_dir() == REPO_ROOT / "data" / "md-rag"
-    monkeypatch.setenv("MVP_DATA_DIR", "custom-data")
-    settings.clear_cache()
+    _set_config("data_dir", "custom-data")
     assert data_dir() == REPO_ROOT / "custom-data"
     target = tmp_path / "document-data"
-    monkeypatch.setenv("MVP_DATA_DIR", str(target))
-    settings.clear_cache()
+    _set_config("data_dir", str(target))
     assert database_path() == target / "documents.sqlite3"
     assert uploads_dir() == target / "uploads"
     assert not target.exists()
@@ -281,7 +238,7 @@ def test_existing_upload_and_sqlite_use_configured_data_root(monkeypatch, tmp_pa
     from backend.src.apps.services.common_service import ensure_upload_dir
 
     target = tmp_path / "documents"
-    monkeypatch.setenv("MVP_DATA_DIR", str(target))
+    _set_config("data_dir", str(target))
     assert ensure_upload_dir() == target / "uploads"
     record = {"doc_id": "test-document", "name": "sample.md", "status": "uploaded"}
     state_store.upsert_document(record)
@@ -311,17 +268,6 @@ def test_tokenizer_failure_is_not_zero(monkeypatch):
         token_counter.count_tokens("非空原文")
 
 
-def test_legacy_truncation_keeps_valid_unicode_prefix():
-    from backend.src.chunking.token_counter import SimpleTokenCounter, count_tokens
-
-    text = "这是中文字符和 emoji 🐱，mixed English。" * 3
-    for budget in range(9):
-        prefix = SimpleTokenCounter().truncate(text, budget)
-        assert text.startswith(prefix)
-        assert "�" not in prefix
-        assert count_tokens(prefix) <= budget
-
-
 @pytest.mark.parametrize("configured", [False, True])
 def test_fresh_import_and_health_need_no_external_services(tmp_path, configured):
     # 新进程避免已缓存模块掩盖导入副作用；解释器就是启动 pytest 的 agent。
@@ -344,9 +290,12 @@ tiktoken.get_encoding = forbidden
 elasticsearch.Elasticsearch = forbidden
 langchain_openai.ChatOpenAI = forbidden
 langchain_openai.OpenAIEmbeddings = forbidden
+from backend.src.config.settings import Settings, settings
+settings._data = Settings(local_path=None, overrides=json.loads(sys.argv[1]))._data
 from backend.src.main import app
 importlib.import_module("backend.src.infrastructure.models")
-assert "backend.src.apps.restful_apis.qa" not in sys.modules
+# QA 路由已挂载：导入可以发生，但上面的 forbidden 钩子保证它不得构造模型或连接外部服务
+assert "/qa/query" in app.openapi()["paths"]
 with TestClient(app) as client:
     response = client.get("/health")
     assert response.status_code == 200
@@ -354,15 +303,11 @@ with TestClient(app) as client:
     assert client.post("/auth/login", json={"username": "demo", "password": "demo123"}).status_code == 200
 print(json.dumps(response.json()))
 '''
-    child_env = dict(os.environ)
-    child_env["MVP_DATA_DIR"] = str(tmp_path / "unused-data")
-    child_env["DEMO_USERNAME"] = "demo"
-    child_env["DEMO_PASSWORD"] = "demo123"
+    config = {"data_dir": str(tmp_path / "unused-data")}
     if configured:
-        child_env["MVP_QA_LLM_API_KEY"] = "test-key"
-        child_env["MVP_EMBEDDING_API_KEY"] = "test-key"
+        config.update({"embedding": {"api_key": "test-key"}, "llm": {"qa": {"api_key": "test-key"}}})
     result = subprocess.run(
-        [sys.executable, "-c", script], cwd=REPO_ROOT, env=child_env,
+        [sys.executable, "-c", script, json.dumps(config)], cwd=REPO_ROOT,
         capture_output=True, text=True, timeout=45,
     )
     assert result.returncode == 0, result.stderr

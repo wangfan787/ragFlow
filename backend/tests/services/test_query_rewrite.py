@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 from backend.src.apps.services.query_rewrite import QueryRewriteService
 from backend.src.chunking.token_counter import SimpleTokenCounter
@@ -24,11 +25,11 @@ class FakeChatModel:
             for message in messages
         )
 
-    def complete(self, messages):
+    def invoke(self, messages):
         self.calls.append(list(messages))
         if not self.responses:
             raise RuntimeError("no fake response")
-        return self.responses.pop(0)
+        return SimpleNamespace(content=self.responses.pop(0))
 
 
 def test_query_rewrite_skips_llm_without_history():
@@ -39,6 +40,42 @@ def test_query_rewrite_skips_llm_without_history():
     assert result.status == "skipped"
     assert result.fallback_reason == "no_history"
     assert model.calls == []
+
+
+def test_query_rewrite_colloquial_mode_without_history():
+    """无历史 + 开启口语规范化：走口语规范化 prompt，mode=colloquial。"""
+    model = FakeChatModel(['{"standalone_query":"查询改写是如何实现的？"}'])
+    service = QueryRewriteService(model, normalize_colloquial=True)
+
+    result = service.rewrite("查询改写咋实现的？")
+
+    assert result.status == "success"
+    assert result.mode == "colloquial"
+    assert result.applied is True
+    assert result.standalone_query == "查询改写是如何实现的？"
+    assert result.history_message_count == 0
+    assert result.history_messages_used == 0
+    # 走的是口语规范化 prompt，不是多轮消解 prompt
+    assert "口语化提问" in model.calls[0][0]["content"]
+    assert "不要回答问题" in model.calls[0][0]["content"]
+    assert result.prompt_tokens <= (
+        model.context_limit_tokens
+        - model.completion_reserve_tokens
+        - service.prompt_safety_tokens
+    )
+
+
+def test_query_rewrite_colloquial_falls_back_keeps_original():
+    """口语规范化输出非法：回退原问题，reason 与多轮路径一致。"""
+    model = FakeChatModel(["这不是 JSON"])
+    service = QueryRewriteService(model, normalize_colloquial=True)
+
+    result = service.rewrite("咋回事啊")
+
+    assert result.status == "fallback"
+    assert result.mode == "colloquial"
+    assert result.standalone_query == "咋回事啊"
+    assert result.fallback_reason == "rewrite_failed:JSONDecodeError"
 
 
 def test_query_rewrite_uses_history_and_returns_strict_standalone_query():
@@ -135,13 +172,13 @@ def test_query_rewrite_never_keeps_an_orphan_assistant_message():
     assert model.calls == []
 
 
-def test_query_rewrite_token_counter_failure_falls_back():
+def test_query_rewrite_token_counter_failure_falls_back(monkeypatch):
     model = FakeChatModel(['{"standalone_query":"unused"}'])
 
     def broken_count(_messages):
         raise RuntimeError("tokenizer unavailable")
 
-    model.count_tokens = broken_count  # type: ignore[method-assign]
+    monkeypatch.setattr("backend.src.apps.services.query_rewrite.count_message_tokens", broken_count)
     result = QueryRewriteService(model).rewrite(
         "它是什么？", [{"role": "user", "content": "RAGFlow"}]
     )

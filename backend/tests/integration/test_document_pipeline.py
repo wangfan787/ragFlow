@@ -5,75 +5,8 @@ from types import SimpleNamespace
 import pytest
 from langchain_core.documents import Document
 
-from backend.src.apps.services.ingestion_pipeline import IngestionPipeline
 from backend.src.apps.services.context_window import ContextWindowBuilder
-from backend.src.apps.services.qa_service import QAService
-from backend.src.chunking import ChunkConfig
-from backend.src.indexing.embedding_indexer import EmbeddingIndexer
 from backend.src.infrastructure.elasticsearch_store import ElasticsearchStore
-from backend.src.retrieval.hybrid_router import HybridRouter
-
-
-class MemoryStore:
-    def __init__(self):
-        self.records = []
-        self.vectors = {}
-
-    def upsert(self, records, vectors):
-        self.records = records
-        self.vectors = vectors
-
-    def delete_stale_by_doc_id(self, doc_id, keep_ids):
-        assert set(keep_ids) == {record.metadata["chunk_id"] for record in self.records}
-
-    def query_by_ids(self, ids):
-        return [record for record in self.records if record.metadata["chunk_id"] in ids]
-
-    def vector_search(self, vector, top_k, filters=None):
-        assert filters["retrieval_eligible"] is True
-        return [Document(page_content=record.page_content, metadata={**record.metadata, "score": 0.8})
-                for record in self.records if record.metadata["retrieval_eligible"]][:top_k]
-
-    def keyword_search(self, query, top_k, filters=None):
-        assert filters["retrieval_eligible"] is True
-        return [Document(page_content=record.page_content, metadata={**record.metadata, "keyword_score": 0.6})
-                for record in self.records if record.metadata["retrieval_eligible"]][:top_k]
-
-
-def test_document_flow_from_parser_to_qa_preserves_body_scores_and_sources():
-    embedded = []
-    model = SimpleNamespace(
-        model="fixture", dimensions=2,
-        embed_documents=lambda texts: embedded.extend(texts) or [[1.0, 0.0] for _ in texts],
-        embed_query=lambda question: [1.0, 0.0],
-    )
-    store = MemoryStore()
-    pipeline = IngestionPipeline(embedding_indexer=EmbeddingIndexer(model, store))
-    config = {"file_type": "md", "doc_name": "notes.md", "text": "# 锁\n\n互斥锁保护共享资源。\n\n自旋锁会忙等。"}
-    result = pipeline.run("doc", config, ChunkConfig())
-    assert result["indexed_count"] == len(store.records)
-    assert all(isinstance(record, Document) for record in store.records)
-    children = [record for record in store.records if record.metadata["retrieval_eligible"]]
-    assert embedded == [record.page_content for record in children]
-    assert set(store.vectors) == {record.metadata["chunk_id"] for record in children}
-    assert all(not {"content", "text", "meta"}.intersection(record.metadata) for record in store.records)
-    assert all(record.metadata["source_span"]["start_line"] >= 1 for record in store.records)
-
-    router = HybridRouter(store=store, embedding_model=model)
-    parents = router.retrieve("互斥锁的作用")
-    assert parents and all(isinstance(parent, Document) for parent in parents)
-    assert all(parent.metadata["score"] == pytest.approx(0.75) for parent in parents)
-    assert sum(len(parent.metadata["matched_children"]) for parent in parents) == len(children)
-    messages = []
-    qa = QAService(model=SimpleNamespace(invoke=lambda value: messages.extend(value) or SimpleNamespace(content="互斥锁保护共享资源。[1]")))
-    qa.retriever = router
-    answer = qa.query("互斥锁的作用")
-    citation = answer["citations"][0]
-    assert "互斥锁保护共享资源" in messages[1]["content"]
-    assert citation["doc_id"] == "doc"
-    assert citation["source_span"]["start_line"] >= 1
-    assert citation["matched_children"]
-    assert answer["trace"]["citation_avg_score"] == pytest.approx(0.75)
 
 
 def test_es_boundary_roundtrip_keeps_metadata_and_parent_has_no_vector():

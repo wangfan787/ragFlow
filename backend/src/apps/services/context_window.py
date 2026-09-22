@@ -5,13 +5,17 @@ from langchain_core.documents import Document
 from backend.src.chunking.token_counter import SimpleTokenCounter
 
 
+class EvidenceBudgetExceeded(ValueError):
+    """命中证据无法完整放入预算，调用方可跳过该候选。"""
+
+
 class ContextWindowBuilder:
     def __init__(self, counter: SimpleTokenCounter | None = None) -> None:
         self.counter = counter or SimpleTokenCounter()
 
     def _largest_radius(self, text: str, start: int, end: int, budget: int) -> tuple[int, int]:
         if self.counter.count(text[start:end]) > budget:
-            raise ValueError("matched Child exceeds QA evidence window budget")
+            raise EvidenceBudgetExceeded("matched Child exceeds QA evidence window budget")
         low, high = 0, max(start, len(text) - end)
         best = (start, end)
         while low <= high:
@@ -30,6 +34,9 @@ class ContextWindowBuilder:
 
     def anchored(self, chunk: Document, budget: int) -> Document:
         text, metadata = chunk.page_content, chunk.metadata
+        tokens = self.counter.count(text)
+        if metadata.get("preserve_structure") and tokens > budget:
+            raise EvidenceBudgetExceeded("complete code/table exceeds QA evidence budget")
         prompt_span = metadata.get("prompt_span") or {}
         base_start = int(prompt_span.get("parent_char_start", 0) or 0)
         base_end = int(prompt_span.get("parent_char_end", base_start + len(text)) or base_start + len(text))
@@ -45,7 +52,7 @@ class ContextWindowBuilder:
         ):
             fallback = str(primary.get("snippet", ""))
             if self.counter.count(fallback) > budget:
-                raise ValueError("matched Child fallback exceeds QA evidence window budget")
+                raise EvidenceBudgetExceeded("matched Child fallback exceeds QA evidence window budget")
             return self._window(
                 chunk, fallback, chunk_role="child",
                 chunk_id=str(primary.get("chunk_id") or metadata["chunk_id"]),
@@ -54,7 +61,7 @@ class ContextWindowBuilder:
                 source_block_ids=list(primary.get("source_block_ids") or []),
                 context_span={"fallback": "matched_child"}, prompt_span={"fallback": "matched_child"},
             )
-        if self.counter.count(text) <= budget:
+        if tokens <= budget:
             span = {"parent_char_start": base_start, "parent_char_end": base_end}
             return self._window(chunk, text, context_span=span, prompt_span=span)
         if primary is None:
@@ -76,10 +83,17 @@ class ContextWindowBuilder:
         return self._window(chunk, text[left:right], matched_children=covered or [primary], context_span=span, prompt_span=span)
 
     def candidates(
-        self, chunks: list[Document], *, top_k: int, max_window_tokens: int,
+        self, chunks: list[Document], *, max_window_tokens: int,
     ) -> list[Document]:
         windows = []
-        for chunk in chunks[:top_k]:
+        for chunk in chunks:
+            if chunk.metadata.get("preserve_structure"):
+                # 单块窗口预算不拆结构；QA 的总提示词预算仍可整块淘汰。
+                span = {"parent_char_start": 0, "parent_char_end": len(chunk.page_content)}
+                windows.append(self._window(
+                    chunk, chunk.page_content, context_span=span, prompt_span=span,
+                ))
+                continue
             matched = chunk.metadata.get("matched_children") or []
             if self.counter.count(chunk.page_content) <= max_window_tokens or not matched:
                 windows.append(self.anchored(chunk, max_window_tokens))

@@ -1,6 +1,6 @@
 # RAG 项目
 
-本仓库用于实现和验证一个可运行、可解释、可评测的 RAG 产品。项目实施状态与路线见 [`docs/plan/README.md`](docs/plan/README.md)，算法概念和决策背景见 [`docs/plan/算法层QA.md`](docs/plan/算法层QA.md)，评测数据与执行契约见 [`docs/plan/评测计划.md`](docs/plan/评测计划.md)。
+本仓库用于实现和验证一个可运行、可解释、可评测的 RAG 产品。项目实施状态与路线见 [`docs/plan/README.md`](docs/plan/README.md)，算法概念和决策背景见 [`docs/plan/算法层QA.md`](docs/plan/算法层QA.md)，评测契约、真实运行记录与参数速查见 [`docs/plan/评测.md`](docs/plan/评测.md)。
 
 ## 开发环境
 
@@ -11,3 +11,32 @@ conda activate agent
 ```
 
 不要使用当前 shell 的默认 Python 判断项目依赖是否安装。
+
+## 主要入口
+
+- 服务：`python -m uvicorn backend.src.main:app --reload`。
+- 核心测试：`python -m pytest -q`（包含后端和评测测试，不依赖大型数据集）。
+- 真实链路演示：`python -m backend.scripts.demo.walkthrough_demo --source demo`；准备 T2 子集后可选 `--source t2`。需要本地 ES 和 `config/local.yaml` 模型配置，仅操作 `rag-demo-*` 索引。
+- [CRUD-RAG 评测与调参](evaluation/README.md)；[T2Retrieval 下载、向量化与评测](dataset/T2Retrieval-subset/README.md)。
+
+重排默认关闭，保留规则基线与可选 CrossEncoder；后者依赖 `backend/requirements-rerank.txt`。
+Git 保留源码、小测试样例、manifest 和锁定配置；大型数据、向量及生成结果仅本地保存。取消跟踪不会删除本地文件，也不会移除历史提交中的大文件。
+
+## 配置
+
+运行配置统一放在根目录 `config/`，使用支持 `#` 注释的 YAML：
+
+- [`defaults.yaml`](config/defaults.yaml)：全部默认值与字段说明，提交 Git。
+- `local.yaml`：本机密钥、模型地址、数据路径等差异，不提交 Git。
+- [`local.example.yaml`](config/local.example.yaml)：新环境的填写模板。
+
+新环境先运行 `cp config/local.example.yaml config/local.yaml`，再填写各模型的 `api_key`。
+已有环境已迁移时直接编辑 `local.yaml`，不要用模板覆盖它。
+本机 YAML 覆盖公共 YAML；不再读取 `.env`、`MVP_*`、`DEMO_*`、`JWT_*` 或 `T2_DATASET_DIR` 环境变量。
+修改配置后重启进程。API 请求与评测 CLI 的显式参数仍可覆盖该次运行，不修改配置文件。
+相对数据路径均以仓库根目录解析，与启动目录无关。
+
+Python 中的配置类只声明字段类型和约束，默认值从 YAML 读取。未知字段和错误类型直接报错；
+布尔值使用 YAML/JSON 的 `true` / `false`，不接受字符串代替。密钥按服务显式配置，不互相借用。
+第三方库的代理、证书、缓存目录等环境变量仍由库自身处理，不参与应用配置优先级。
+评测 manifest、锁定结果和 run/score JSON 是实验产物，不是另一套运行配置。

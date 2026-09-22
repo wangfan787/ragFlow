@@ -1,0 +1,90 @@
+# 唯一默认配置；本机密钥与差异放在同目录 local.yaml（不提交 Git）。
+# 不读取 shell / .env；相对路径以仓库根目录为基准。修改后重启服务。
+data_dir: data/md-rag # 上传文件、图片资产和 SQLite 的根目录
+
+auth:
+  username: demo # 演示登录账号
+  password: demo123 # 本机密码在 local.yaml 覆盖
+  jwt_secret: jwt-secret # 本机签名密钥在 local.yaml 覆盖
+  token_ttl_seconds: 86400 # 登录有效期，秒
+upload:
+  max_bytes: 20971520 # 单个文档最多 20 MiB
+image:
+  max_bytes: 10485760 # 单张图片最多 10 MiB
+
+embedding:
+  backend: glm # 写入索引的模型来源标签
+  api_key: "" # 本机密钥，不从环境或其他服务借用
+  model: embedding-3 # 嵌入模型
+  base_url: https://open.bigmodel.cn/api/paas/v4 # 嵌入 API
+  dimensions: 1024 # 向量维度，修改后需重建索引
+  batch_size: 16 # 每批输入数，当前供应商最多 16
+  max_input_tokens: 3072 # 单条输入预算，cl100k_base 工程估算
+
+llm:
+  timeout_seconds: 60 # 请求超时
+  max_retries: 1 # SDK 请求重试次数
+  qa:
+    api_key: "" # 问答和查询改写密钥
+    model: GLM-5.1 # 问答模型
+    base_url: https://open.bigmodel.cn/api/coding/paas/v4 # 问答 API
+    context_limit_tokens: 32768 # 输入与输出合计预算
+    completion_reserve_tokens: 1024 # 输出预留，同时作为模型 max_tokens
+    prompt_safety_tokens: 256 # 工程计数与供应商 tokenizer 差异余量
+    temperature: 0.2 # 生成温度
+  vision:
+    api_key: "" # 独立显式填写视觉模型密钥
+    model: glm-4.6v-flash # 图片描述模型
+    base_url: https://open.bigmodel.cn/api/paas/v4 # 视觉 API
+    max_tokens: 512 # 图片描述最大输出
+    temperature: 0.0 # 图片描述温度
+
+elasticsearch:
+  url: http://localhost:9200 # ES 地址
+  index: rag-mvp-chunks # 正式索引，演示/评测可显式传其他索引名
+  timeout: 30 # 请求超时，秒
+
+chunking:
+  parent_target_tokens: 512 # 正文父块目标长度
+  parent_max_tokens: 768 # 正文父块硬上限
+  child_target_tokens: 128 # 正文子块目标长度
+  child_max_tokens: 192 # 正文子块硬上限
+  embedding_input_budget: 192 # 正文嵌入预算；完整代码/表格只受模型上限限制
+  align_to_boundary: true # 标题等结构边界开启新父块
+  preserve_code_block: true # 代码整块保留
+  preserve_table_block: true # 表格整块保留
+
+retrieval:
+  top_k: 5 # 聚合后返回父块数
+  candidate_top_k: 30 # 每个通道召回池大小
+  similarity_threshold: 0.1 # 子块最终评分最低阈值
+  vector_weight: 0.75 # 向量权重，与 BM25 权重一起归一化
+  keyword_weight: 0.25 # BM25 权重
+  retrieval_mode: hybrid # hybrid / vector / keyword
+  rerank_enabled: false # 是否对子块重排
+  rerank_backend: rule # rule / cross-encoder
+  rerank_top_n: null # 送排数量，null 使用 candidate_top_k
+  filters: null # 可选 ES 字段过滤字典
+
+reranker:
+  model: cross-encoder/ms-marco-MiniLM-L6-v2 # 中文任务应显式选择中文/多语模型
+  batch_size: 16 # 重排推理批大小
+  max_length: 512 # 重排模型输入长度
+  device: "" # 空字符串自动选择，也可填写 cpu / cuda / mps
+
+qa:
+  context_top_k: 5 # 进入证据构造的父块数
+  evidence_mode: window # window / child_only / full_parent
+  evidence_window_tokens: 384 # 单个正文窗口预算，完整结构块只受总预算限制
+  query_rewrite_enabled: true # 带历史时先改写成独立问题
+  colloquial_normalization_enabled: false # 无历史时是否规范化口语
+  step_back_enabled: false # 是否额外检索抽象背景问题
+
+query_rewrite:
+  max_history_turns: 6 # 最多保留完整历史轮次
+  max_history_tokens: 2048 # 历史文本预算
+  prompt_safety_tokens: 128 # 改写提示词余量
+  max_query_tokens: 256 # 改写后问句预算
+
+dataset:
+  t2_dir: dataset/T2Retrieval # 跑子集时在 local.yaml 改为 dataset/T2Retrieval-subset

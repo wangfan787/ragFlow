@@ -1,6 +1,6 @@
 """Markdown 图片 → 资产保存 → VLM 描述 → 原子 image block 的编排层。
 
-只负责编排与失败处理（docs/plan/算法层QA.md §7.2 P0-A）：
+只负责编排与失败处理：
 - 原图按 SHA256 保存并登记归属，读取必须走 asset_id + owner 鉴权；
 - VLM 失败时保留资产与 failed 状态，不伪造描述；
 - skipped 引用（穿越/缺文件/类型不支持等）保留占位 block 与原因，
@@ -114,7 +114,7 @@ class ImagePipeline:
             content = ref.resolved_path.read_bytes()
         except OSError:
             return self._skipped_block(ref, {**base_metadata, "skip_reason": "read_failed"})
-        max_bytes = settings.integer("MVP_IMAGE_MAX_BYTES", 10 * 1024 * 1024, positive=True)
+        max_bytes = settings.integer('image.max_bytes', positive=True)
         if len(content) > max_bytes:
             return Document(
                 page_content=f"[图片] {placeholder}（未索引：file_too_large）",

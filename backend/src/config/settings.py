@@ -1,134 +1,80 @@
-from __future__ import annotations
+"""只读取 config/defaults.yaml + config/local.yaml，不导入环境变量。"""
 
-import os
-from typing import Any
+from copy import deepcopy
+from pathlib import Path
+import math
 
-from .env import config_value, load_config, load_env
+import yaml
 
-# 没有环境变量和 YAML 值时使用的首版基线；密钥没有默认值。
-_DEFAULTS: dict[str, Any] = {
-    "MVP_DATA_DIR": "data/md-rag",
-    "MVP_EMBEDDING_MODEL": "embedding-3",
-    "MVP_EMBEDDING_BASE_URL": "https://open.bigmodel.cn/api/paas/v4",
-    "MVP_EMBEDDING_DIMENSIONS": 1024,
-    "MVP_EMBEDDING_BATCH_SIZE": 16,
-    "MVP_QA_LLM_MODEL": "GLM-5.1",
-    "MVP_QA_LLM_BASE_URL": "https://open.bigmodel.cn/api/coding/paas/v4",
-    "MVP_QA_LLM_CONTEXT_TOKENS": 32768,
-    "MVP_QA_COMPLETION_RESERVE_TOKENS": 1024,
-    "MVP_QA_LLM_TEMPERATURE": 0.2,
-    "MVP_VISION_LLM_MODEL": "glm-4.6v-flash",
-    "MVP_VISION_LLM_BASE_URL": "https://open.bigmodel.cn/api/paas/v4",
-    "MVP_VISION_LLM_MAX_TOKENS": 512,
-    "MVP_VISION_LLM_TEMPERATURE": 0.0,
-    "MVP_ELASTICSEARCH_URL": "http://localhost:9200",
-    "MVP_ELASTICSEARCH_INDEX": "rag-md-v1",
-    "MVP_ELASTICSEARCH_TIMEOUT": 30,
-    "MVP_QA_CONTEXT_TOP_K": 5,
-    "MVP_QA_EVIDENCE_WINDOW_TOKENS": 384,
-    "MVP_QA_PROMPT_SAFETY_TOKENS": 256,
-}
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_CONFIG = REPO_ROOT / "config" / "defaults.yaml"
+LOCAL_CONFIG = REPO_ROOT / "config" / "local.yaml"
+
+
+def _read_yaml(path: Path) -> dict:
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        # 不把可能含密钥的 YAML 原文带进异常消息。
+        raise ValueError(f"Invalid YAML configuration: {path}") from None
+    if not isinstance(data, dict):
+        raise ValueError(f"Configuration must be a mapping: {path}")
+    return data
+
+
+def _merge(base: dict, overrides: dict, prefix: str = "") -> dict:
+    result = deepcopy(base)
+    for key, value in overrides.items():
+        name = f"{prefix}{key}"
+        if key not in base:
+            raise ValueError(f"Unknown configuration field: {name}")
+        if isinstance(base[key], dict):
+            if not isinstance(value, dict):
+                raise ValueError(f"Configuration section must be a mapping: {name}")
+            result[key] = _merge(base[key], value, f"{name}.")
+        else:
+            result[key] = value
+    return result
 
 
 class Settings:
-    """进程环境 > 根 .env > YAML > 默认值；只提供现有调用方使用的读取方法。"""
-    
-    def __init__(self, *, auto_load: bool = True, cache: bool = True) -> None:
-        if auto_load:
-            load_env()
-            load_config()
-        self._cache: dict[str, Any] = {}
-        self._cache_enabled = cache
-    
-    def _get(self, name: str) -> Any:
-        """获取原始环境变量值（带缓存）"""
-        if self._cache_enabled and name in self._cache:
-            return self._cache[name]
-        
-        value = os.getenv(name)
-        if value is None:
-            value = config_value(name)
-        if value is None:
-            value = _DEFAULTS.get(name)
-        if isinstance(value, str):
-            value = value.strip()
-        
-        if self._cache_enabled:
-            self._cache[name] = value
-        
+    """读取一次；测试可显式传 local_path / overrides，不改变进程环境。"""
+
+    def __init__(self, *, local_path: Path | None = LOCAL_CONFIG, overrides: dict | None = None):
+        self._data = _read_yaml(DEFAULT_CONFIG)
+        if local_path is not None and local_path.is_file():
+            self._data = _merge(self._data, _read_yaml(local_path))
+        if overrides is not None:
+            self._data = _merge(self._data, overrides)
+
+    def get(self, name: str):
+        value = self._data
+        for key in name.split("."):
+            value = value[key]
+        return deepcopy(value)
+
+    def text(self, name: str) -> str:
+        value = self.get(name)
+        if not isinstance(value, str):
+            raise ValueError(f"{name} must be a string")
         return value
-    
-    def text(self, name: str, default: str = "") -> str:
-        """获取字符串值"""
-        value = self._get(name)
-        return str(value) if value is not None else default
-    
-    def first(self, *names: str, default: str = "") -> str:
-        """从多个键中获取第一个非空值"""
-        for name in names:
-            value = self.text(name)
-            if value:
-                return value
-        return default
-    
-    def integer(self, name: str, default: int, *, 
-                min_value: int | None = None,
-                max_value: int | None = None,
+
+    def integer(self, name: str, *, min_value: int | None = None, max_value: int | None = None,
                 positive: bool = False) -> int:
-        """获取整数值并验证"""
-        raw = self._get(name)
-        if raw is None:
-            value = default
-        else:
-            try:
-                value = int(raw)
-            except ValueError:
-                raise ValueError(f"invalid integer for {name}: {raw!r}")
-        
-        if positive and value <= 0:
-            raise ValueError(f"{name} must be > 0, got {value}")
-        if min_value is not None and value < min_value:
-            raise ValueError(f"{name} must be >= {min_value}, got {value}")
+        value = self.get(name)
+        if type(value) is not int:
+            raise ValueError(f"{name} must be an integer")
+        if (positive and value <= 0) or (min_value is not None and value < min_value):
+            raise ValueError(f"{name} is below its minimum")
         if max_value is not None and value > max_value:
-            raise ValueError(f"{name} must be <= {max_value}, got {value}")
-        
+            raise ValueError(f"{name} exceeds its maximum")
         return value
-    
-    def optional_integer(self, name: str) -> int | None:
-        """获取整数值，未配置时返回 None（调用方自行决定默认/省略语义）"""
-        raw = self._get(name)
-        if raw is None or raw == "":
-            return None
-        try:
-            return int(raw)
-        except ValueError:
-            raise ValueError(f"invalid integer for {name}: {raw!r}")
 
-    def float(self, name: str, default: float, *,
-              min_value: float | None = None,
-              max_value: float | None = None) -> float:
-        """获取浮点数值并验证"""
-        raw = self._get(name)
-        if raw is None:
-            value = default
-        else:
-            try:
-                value = float(raw)
-            except ValueError:
-                raise ValueError(f"invalid float for {name}: {raw!r}")
-        
-        if min_value is not None and value < min_value:
-            raise ValueError(f"{name} must be >= {min_value}, got {value}")
-        if max_value is not None and value > max_value:
-            raise ValueError(f"{name} must be <= {max_value}, got {value}")
-        
-        return value
-    
-    def clear_cache(self) -> None:
-        """清除缓存"""
-        if self._cache_enabled:
-            self._cache.clear()
+    def float(self, name: str) -> float:
+        value = self.get(name)
+        if type(value) not in (int, float) or not math.isfinite(value):
+            raise ValueError(f"{name} must be a finite number")
+        return float(value)
 
 
-# 全局单例
 settings = Settings()

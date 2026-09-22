@@ -11,8 +11,6 @@ from backend.src.retrieval.ranking import chunk_order
 
 logger = logging.getLogger("mvp_api")
 
-DEFAULT_CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L6-v2"
-
 
 class CrossEncoderPredictor(Protocol):
     def predict(self, inputs: list[tuple[str, str]], **kwargs: Any) -> Any: ...
@@ -57,23 +55,23 @@ class CrossEncoderReranker(Reranker):
         device: str | None = None,
     ) -> None:
         self.model_name = (
-            model_name or settings.text("MVP_RERANK_MODEL") or DEFAULT_CROSS_ENCODER_MODEL
+            model_name or settings.text("reranker.model")
         )
         self.batch_size = (
             batch_size
             if batch_size is not None
-            else settings.integer("MVP_RERANK_BATCH_SIZE", 16, positive=True)
+            else settings.integer('reranker.batch_size', positive=True)
         )
         self.max_length = (
             max_length
             if max_length is not None
-            else settings.integer("MVP_RERANK_MAX_LENGTH", 512, positive=True)
+            else settings.integer('reranker.max_length', positive=True)
         )
         if self.batch_size <= 0:
             raise ValueError("batch_size must be > 0")
         if self.max_length <= 0:
             raise ValueError("max_length must be > 0")
-        self.device = device if device is not None else settings.text("MVP_RERANK_DEVICE")
+        self.device = device if device is not None else settings.text('reranker.device')
         self._predictor = predictor
 
     def _load_predictor(self) -> CrossEncoderPredictor:
@@ -82,7 +80,8 @@ class CrossEncoderReranker(Reranker):
             from sentence_transformers import CrossEncoder
         except Exception as exc:  # pragma: no cover - depends on optional runtime package
             raise RuntimeError(
-                "cross-encoder backend requires the rerank extra; run `uv sync --extra rerank`"
+                "cross-encoder backend requires sentence-transformers; "
+                "run `pip install -r backend/requirements-rerank.txt`"
             ) from exc
 
         logger.info(

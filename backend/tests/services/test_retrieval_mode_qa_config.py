@@ -123,7 +123,7 @@ def test_retrieval_mode_validation_and_normalization():
     assert config.retrieval_mode == "vector"
     with pytest.raises(ValueError, match="retrieval_mode"):
         build_retrieval_config(retrieval_mode="semantic")
-    with pytest.raises(ValueError, match="unsupported retrieval_config fields"):
+    with pytest.raises(ValueError, match="unknown_field"):
         build_retrieval_config(unknown_field=1)
 
 
@@ -207,9 +207,9 @@ def test_qa_config_build_and_validation():
     assert config == QAConfig(context_top_k=5, evidence_mode="child_only", evidence_window_tokens=192)
     with pytest.raises(ValueError, match="evidence_mode"):
         build_qa_config(evidence_mode="everything")
-    with pytest.raises(ValueError, match="unsupported qa_config fields"):
+    with pytest.raises(ValueError, match="window_tokens"):
         build_qa_config(window_tokens=192)
-    with pytest.raises(ValueError, match="cannot be None"):
+    with pytest.raises(ValueError, match="evidence_window_tokens"):
         build_qa_config(evidence_window_tokens=None)
     with pytest.raises(ValueError):
         QAConfig(context_top_k=0)
@@ -316,6 +316,9 @@ def test_qa_window_mode_default_unchanged_and_request_scoped():
 
     assert payload_two["trace"]["config"]["qa_config"] == {
         "context_top_k": 5, "evidence_mode": "window", "evidence_window_tokens": 100000,
+        "query_rewrite_enabled": True,
+        "colloquial_normalization_enabled": False,
+        "step_back_enabled": False,
     }
     # 两次请求的 trace 都是请求局部对象
     assert payload_two["trace"]["request_local"] is True

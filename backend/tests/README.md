@@ -1,32 +1,11 @@
-# 测试目录结构
+# 核心回归测试
 
-按 RAG 流水线阶段分类；目录名 = 代码层。从仓库根目录运行 `pytest` 即可收集全部。
+在仓库根目录激活 Conda `agent` 后，执行 `python -m pytest -q`，默认同时运行 `backend/tests` 与 `evaluation/tests`。
 
-```
-tests/
-├── parsing/      解析层：真实样例回归（md+pdf）、新旧 parser 对照、可视化展示
-│   └── data/     样例数据文件（并发编程-锁.md / 简历.pdf / sample_walkthrough.md）
-├── chunking/     分块层：守恒不变量测试 + 可视化展示
-├── embedding/    向量化适配层
-├── foundation/   基础设施：配置 / 状态 / 数据路径
-├── services/     应用服务：查询改写
-├── integration/  跨层集成：test_repair_plan.py（设计文档 §10 不变量主套件）、文档管线
-```
+- `parsing/`、`chunking/`：解析、来源定位、Token 上限、文本守恒和父子关系。
+- `embedding/`、`foundation/`：模型接口、配置和状态。
+- `services/`、`integration/`：文档生命周期、检索问答、改写回退、图片鉴权及跨层管线契约。
+- `evaluation/tests/`：数据确定性、指标计算、结果完整性和 Dev/Test 隔离。
 
-## 两类文件的区分
-
-- **`test_*.py`**：pytest 自动收集的测试。其中 `test_*_showcase.py` 是
-  "可视化展示测试"——用真实数据集文档把输入/输出完整打印（`pytest -s` 运行），
-  同时内嵌结构断言，兼作回归。
-- **`backend/scripts/demo/`**：人工演示脚本（不属于 pytest），手动运行：
-  ```bash
-  python -m backend.scripts.demo.walkthrough_demo    # 真实样例的父子切片演示
-  python -m backend.scripts.demo.show_results [文件]  # 解析结果报告
-  ```
-
-## 约定
-
-- 样例数据统一放 `parsing/data/`，测试内用 `Path(__file__)` 相对定位
-  （注意目录深度：`tests/<层级>/xxx.py` 到仓库根是 `parents[3]`）。
-- `test_repair_plan.py` 是设计文档（designed/repair-plan.md §10）锚定的主套件；
-  改动解析/分块/索引/检索任何一层后，先跑它。
+测试使用小样例、临时目录和 fake 模型/存储，不要求大型数据集或运行中的 ES，也不调用付费模型。
+人工演示仅保留 `python -m backend.scripts.demo.walkthrough_demo --source demo`（真实 embedding + ES）。

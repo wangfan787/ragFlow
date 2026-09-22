@@ -6,7 +6,6 @@ import argparse
 import hashlib
 import json
 import math
-import os
 import sys
 from pathlib import Path
 
@@ -16,8 +15,9 @@ import pyarrow.parquet as pq
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-# 默认全量目录；跑 1 万条子集时显式导出 T2_DATASET_DIR，防止误把全量送去 embedding。
-DATASET_DIR = Path(os.environ.get("T2_DATASET_DIR") or ROOT / "dataset" / "T2Retrieval")
+from backend.src.config.settings import settings
+
+DATASET_DIR = (ROOT / settings.text("dataset.t2_dir")).expanduser().resolve()
 ARTIFACT_DIR = DATASET_DIR / "embeddings-v2"
 SCHEMA_VERSION = "t2-production-rag-v2"
 ADAPTER_ALGORITHM_VERSION = "production-adapter-v2.3-child-body"

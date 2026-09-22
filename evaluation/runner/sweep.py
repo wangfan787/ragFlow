@@ -1,4 +1,4 @@
-"""Dev-only 单变量参数扫描与配置锁定（评测计划 E1-C 实验纪律）。
+"""Dev-only 单变量参数扫描与配置锁定。
 
 规则：
 1. 只在 Dev 分片扫描；每个轴只改一个变量，禁止无边界笛卡尔积；
@@ -213,7 +213,7 @@ def lock_and_report(
 ) -> dict:
     """扫描 → 锁定 → 写 locks/ 产物。返回锁定的完整配置。"""
     if split != "dev":
-        raise ValueError("参数扫描只允许 dev 分片（评测计划 E1-C）")
+        raise ValueError("参数扫描只允许 dev 分片")
     sweep = sweep_retrieval(dataset_dir, stack, split)
     rerank_decision = decide_rerank(sweep["baselines"])
     locked_retrieval = compose_locked_config({}, sweep["picks"], rerank_decision["enabled"])
@@ -310,7 +310,7 @@ def main() -> None:
     parser.add_argument("--dataset", type=Path, required=True)
     parser.add_argument("--index-name", type=str, required=True)
     parser.add_argument("--split", choices=("dev",), default="dev",
-                        help="扫描只允许 Dev 分片（评测计划 E1-C）")
+                        help="扫描只允许 Dev 分片")
     parser.add_argument("--skip-evidence", action="store_true", help="跳过证据层扫描（省 Chat 费用）")
     args = parser.parse_args()
 

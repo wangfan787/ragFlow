@@ -25,7 +25,7 @@ class EmbeddingRetriever:
     def retrieve(self, query: str, retrieval_config: dict | None = None) -> list[dict]:
         config = retrieval_config or {}
         top_k = int(config.get("top_k", 10))
-        filters = config.get("filters") if isinstance(config.get("filters"), dict) else None
+        filters = config.get("filters")
 
         if len(query.encode("utf-8")) > 3072:
             raise ValueError("检索问题不能超过 3072 UTF-8 字节")
@@ -37,10 +37,9 @@ class EmbeddingRetriever:
         if len(query_vector) != dimension or not all(math.isfinite(x) for x in query_vector) or not any(query_vector):
             raise ValueError("query embedding has invalid dimension, zero or non-finite values")
         model_filters = {
-            "embedding_backend": settings.text("MVP_EMBEDDING_BACKEND", "glm"),
+            "embedding_backend": settings.text('embedding.backend'),
             "embedding_model": embedding.model,
             "embedding_dim": len(query_vector),
-            "retrieval_eligible": True,
         }
         rows = self._store.vector_search(
             query_vector,
@@ -61,7 +60,7 @@ class EmbeddingRetriever:
             query,
             {
                 "store": "elasticsearch",
-                "embedding": settings.text("MVP_EMBEDDING_BACKEND", "glm"),
+                "embedding": settings.text('embedding.backend'),
                 "model": embedding.model,
                 "dim": len(query_vector),
             },

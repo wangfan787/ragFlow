@@ -7,9 +7,8 @@
 下游 BlockChunker 无需感知引擎切换。
 
 换引擎的已知取舍（面试可讲，对应 Tika 式"广格式 vs 格式内保真"权衡）：
-- 表格被规范化为纯文本（GFM 竖线与单元格结构丢失，如需保留可开启
-  unstructured 的 infer_table_structure 拿 text_as_html）；
-- 列表项内的围栏代码会被拍平为 NarrativeText，且语言标签混入正文；
+- Markdown 代码/表格按语法边界原样保留，其余内容由 unstructured 解析；
+- 其他格式的表格优先使用 text_as_html；引擎未提供结构时仅有纯文本；
 - source_span 通过把 element 文本回定位到原文获得，Markdown 标记剥离后
   部分块退化为 line_only / unavailable 精度（与旧 HTML 解析器同策略）；
 - PDF 走 fast 策略（pdfminer 纯文本抽取），不做 OCR 与版面模型；
@@ -31,9 +30,7 @@ from unstructured.partition.md import partition_md
 from unstructured.partition.text import partition_text
 
 from .models import ParseSource, parse_source_from_config, parsed_documents
-
-# md 的 YAML frontmatter；unstructured 会把 --- 当主题分割线，需先剥离。
-_FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", re.DOTALL)
+from .markdown_structures import prepare_markdown
 
 # unstructured category → block 契约的 block_type；未列出的类别一律按
 # paragraph 处理，保证 BlockMergeStrategy 的合并语义不变。
@@ -128,15 +125,22 @@ class UnstructuredParser:
             blocks = self._to_blocks(elements, file_type, raw=None)
         elif file_type in self._TEXTUAL_TYPES:
             raw = source.read_text()  # 严格 UTF-8 校验统一在输入边界完成
-            elements, frontmatter = self._partition_engine(
-                lambda: self._partition_textual(file_type, raw)
-            )
+            protected, frontmatter = {}, None
+            if file_type in {"md", "markdown"}:
+                partition_raw, protected, frontmatter = prepare_markdown(raw)
+                elements = self._partition_engine(
+                    lambda: partition_md(file=io.BytesIO(partition_raw.encode("utf-8")))
+                )
+            elif file_type in {"html", "htm"}:
+                elements = self._partition_engine(lambda: partition_html(text=raw))
+            else:
+                elements = self._partition_engine(lambda: partition_text(text=raw))
             # md/html 的 element 文本已经过实体解码，回定位前原文需同样解码，
             # 否则 "Hello &amp; world" 与 "Hello & world" 永远匹配不上。
             locate_raw = (
                 _html.unescape(raw) if file_type in {"md", "markdown", "html", "htm"} else raw
             )
-            blocks = self._to_blocks(elements, file_type, locate_raw)
+            blocks = self._to_blocks(elements, file_type, locate_raw, protected)
             if frontmatter is not None:
                 blocks.insert(0, frontmatter)
         else:
@@ -145,36 +149,6 @@ class UnstructuredParser:
         if not blocks:
             raise ValueError("no parseable content found")
         return parsed_documents(blocks, doc_id, source.name)
-
-    def _partition_textual(self, file_type: str, raw: str):
-        frontmatter = None
-        if file_type in {"md", "markdown"}:
-            match = _FRONTMATTER_RE.match(raw)
-            if match:
-                frontmatter_text = match.group(1)
-                frontmatter = {
-                    "text": frontmatter_text,
-                    "block_type": "frontmatter",
-                    "page_no": None,
-                    "bbox": None,
-                    "section_path": [],
-                    "order": 0,
-                    "source_span": {
-                        "start_line": 1,
-                        "end_line": raw.count("\n", 0, match.end()) + 1,
-                        "start_char": 0,
-                        "end_char": match.end(),
-                        "page_no": None,
-                        "accuracy": "line_only",
-                    },
-                    "metadata": {},
-                }
-                raw = raw[match.end():]
-                return partition_md(file=io.BytesIO(raw.encode("utf-8"))), frontmatter
-            return partition_md(file=io.BytesIO(raw.encode("utf-8"))), None
-        if file_type in {"html", "htm"}:
-            return partition_html(text=raw), None
-        return partition_text(text=raw), None
 
     @staticmethod
     def _partition_engine(partition):  # noqa: ANN001 - unstructured element 列表
@@ -210,7 +184,10 @@ class UnstructuredParser:
             raise FileNotFoundError(f"source file missing for pdf: {file_path}")
         return partition_pdf(filename=str(file_path), strategy="fast")
 
-    def _to_blocks(self, elements: list, file_type: str, raw: str | None) -> list[dict]:
+    def _to_blocks(
+        self, elements: list, file_type: str, raw: str | None,
+        protected: dict[str, dict] | None = None,
+    ) -> list[dict]:
         blocks: list[dict] = []
         section_path: list[str] = []
         locator = (
@@ -220,10 +197,14 @@ class UnstructuredParser:
             text = (element.text or "").strip()
             if not text:
                 continue
+            preserved = (protected or {}).get(text)
             block_type = (
                 "paragraph" if file_type in _PLAIN_TYPES
                 else _CATEGORY_TO_BLOCK_TYPE.get(element.category, "paragraph")
             )
+            if preserved is not None:
+                text = preserved["text"]
+                block_type = preserved["block_type"]
             if block_type == "heading":
                 depth = element.metadata.category_depth
                 # category_depth 为 0 起算（h1→0）；缺失时按一级标题处理。
@@ -231,7 +212,7 @@ class UnstructuredParser:
                 section_path = section_path[: max(0, level - 1)]
                 section_path.append(text)
             if locator is not None:
-                span = locator.locate(text)
+                span = locator.locate(_html.unescape(text) if preserved else text)
             else:
                 span = {
                     "start_line": None,
@@ -241,6 +222,12 @@ class UnstructuredParser:
                     "page_no": element.metadata.page_number,
                     "accuracy": "unavailable",
                 }
+            if preserved is not None:
+                span = dict(preserved["source_span"])
+            elif block_type == "table" and element.metadata.text_as_html:
+                text = element.metadata.text_as_html
+            elif block_type == "code":
+                text = element.text
             blocks.append(
                 {
                     "text": text,

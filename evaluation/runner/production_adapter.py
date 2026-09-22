@@ -1,4 +1,4 @@
-"""生产组件组装与 run schema 映射（评测计划 §4.1）。
+"""生产组件组装与 run schema 映射。
 
 本模块是 Runner 与 backend 之间唯一的边界：
 - build_stack 用生产构造器组装 IngestionPipeline / HybridRouter / QAService，
@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any
 
 from evaluation import DATASET_ID
@@ -23,8 +23,10 @@ from backend.src.indexing.embedding_indexer import EmbeddingIndexer
 from backend.src.infrastructure.elasticsearch_store import ElasticsearchStore
 from backend.src.retrieval.hybrid_router import HybridRouter
 
-# 与生产无证据/预算耗尽语义对应的 ServiceError code → run status
-NO_EVIDENCE_CODES = {"NO_RETRIEVED_CHUNKS", "QA_CONTEXT_BUDGET_EXHAUSTED"}
+# 与生产"预算耗尽"语义对应的 ServiceError code → run status。
+# 2026-09-19 P0 起，检索为空不再是错误：QAService 返回 status="no_evidence"
+# 的产品响应，由 qa_run_row 正常映射；此集合只剩预算耗尽这一种异常。
+NO_EVIDENCE_CODES = {"QA_CONTEXT_BUDGET_EXHAUSTED"}
 
 
 @dataclass
@@ -70,7 +72,7 @@ def run_meta(
         else build_retrieval_config(retrieval_config or {})
     )
     fingerprint_source = {
-        "retrieval_config": asdict(config_obj),
+        "retrieval_config": config_obj.model_dump(),
         "qa_config": qa_config or {},
     }
     return {
@@ -81,7 +83,7 @@ def run_meta(
         "dataset_manifest_sha256": sha256_file(dataset_dir / "manifest.json"),
         "git_commit": git_commit(),
         "es_index": index_name,
-        "retrieval_config": asdict(config_obj),
+        "retrieval_config": config_obj.model_dump(),
         "qa_config": qa_config or {},
         "config_fingerprint": config_fingerprint(fingerprint_source),
     }
@@ -194,7 +196,8 @@ def qa_run_row(query: dict, payload: dict, meta: dict) -> dict:
         "evidence_doc_ids": list(trace.get("qa_budget", {}).get("evidence_doc_ids", [])),
         "answer": payload.get("answer", ""),
         "citations": citations,
-        "status": "ok",
+        # P0 no_evidence 协议：产品响应自带 status；answered 映射回历史 run 的 "ok"
+        "status": "no_evidence" if payload.get("status") == "no_evidence" else "ok",
         "latency_ms": {key: value for key, value in timings.items() if isinstance(value, (int, float))},
         "usage": _numeric_usage(trace.get("usage", {})),
         "meta": meta,

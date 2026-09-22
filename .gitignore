@@ -1,4 +1,4 @@
-# Local secrets loaded automatically by backend/src/config/env.py.
+# Legacy dotenv files are never loaded.
 .env
 .env.*
 !.env.example
@@ -23,6 +23,9 @@ htmlcov/
 # and dependency manifests, but never commit the local T2Retrieval contents.
 dataset/T2Retrieval/
 dataset/CRUD_RAG/
+dataset/T2Retrieval-subset/*.parquet
+dataset/T2Retrieval-subset/embeddings-v2/
+dataset/T2Retrieval-subset/reports/
 
 # Rebuildable evaluation data and run outputs. Evaluation source code,
 # schemas, tests and documentation remain tracked.
@@ -50,3 +53,7 @@ local_proxy_off
 local_proxy_on
 PROXY_GUIDE.md
 PROXY_USAGE.md
+
+# Private YAML overrides and local runtime data.
+config/local.yaml
+data/

@@ -1,6 +1,6 @@
 """Markdown 本地图片引用提取与 image block 交错：纯文本操作，无 IO 副作用。
 
-P0-A（docs/plan/算法层QA.md §7.2）只支持 Markdown 相对路径本地
+P0-A 只支持 Markdown 相对路径本地
 PNG/JPEG/WebP。URL、绝对路径、`..` 穿越与不支持的扩展名一律产出
 带原因的 skipped 引用，由调用方如实记录，不在本层静默丢弃。
 

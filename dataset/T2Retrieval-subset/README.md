@@ -1,7 +1,8 @@
-# T2Retrieval 10k 评测子集（持久化 artifact）
+# T2Retrieval 10k 评测子集
 
-本目录是后续所有 T2 评测的唯一数据依赖；`dataset/T2Retrieval/`（全量 118,605 篇）只是原料，
-可随时删除并重新下载，不影响本子集。
+本目录保存 T2 评测的本地数据与向量资产。Git 只保留本文和 `manifest.json`；Parquet、`embeddings-v2/` 和生成的 `reports/` 均忽略。已生成的本地文件保留，避免重新调用 embedding。
+
+`dataset/T2Retrieval/`（全量 118,605 篇）是抽样原料。重新下载后的源文件必须与 manifest 中的指纹一致，才能复现相同子集。
 
 ## 内容
 
@@ -26,14 +27,39 @@ python subsample_t2retrieval.py --num-queries 500 --pool-docs 10000 --seed 42
 
 ## 管线接入
 
-embed / evaluate 脚本默认指向全量目录，跑子集时必须显式导出环境变量：
+embed / evaluate 脚本默认指向全量目录，跑子集时在 `config/local.yaml` 中设置：
 
-```bash
-export T2_DATASET_DIR="$(pwd)/dataset/T2Retrieval-subset"
+```yaml
+dataset:
+  t2_dir: dataset/T2Retrieval-subset
 ```
 
 embedding 产物将写入本目录下的 `embeddings-v2/`（mmap 向量 + chunk 映射 + 断点续跑指纹），
 与本子集自包含，不会污染全量目录。
+
+## 完整复现入口
+
+在仓库根目录激活 Conda `agent` 并安装 `backend/requirements.txt`、`dataset/requirements.txt`。首次使用且没有原始数据时，下载并抽样：
+
+```bash
+cd dataset
+python download_t2retrieval.py
+python subsample_t2retrieval.py --num-queries 500 --pool-docs 10000 --seed 42
+cd ..
+```
+
+配置本地 `config/local.yaml` 的 embedding 凭据和上述数据目录后，生成向量并评测：
+
+```bash
+# 只解析、分块、生成待嵌入文本和指纹，不调用模型。
+python -m dataset.embed_t2retrieval --prepare-only
+# 首次执行会调用 embedding；已有完整产物时按指纹校验后复用。
+python -m dataset.embed_t2retrieval
+# 只读取本地向量，500 条 query 对 10,000 篇候选文档评测。
+python -m dataset.evaluate_t2retrieval --expected-query-count 500
+```
+
+评测输出 JSON 到标准输出，可自行保存到本地 `reports/`。`--rerank-model` 可选，依赖 `backend/requirements-rerank.txt`，不传则仅做向量检索。历史上游排序适配实验已从维护范围移除，已有比较报告仍留在本地 `reports/`，不属于正式 RAGFlow benchmark。
 
 ## 已测成本（生产链路精确口径，cl100k 计数）
 

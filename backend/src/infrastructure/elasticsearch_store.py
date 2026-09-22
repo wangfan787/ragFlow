@@ -17,9 +17,9 @@ class ElasticsearchStore:
 
     def __init__(self, client=None, index_name: str | None = None) -> None:
         self._client = client
-        self.index_name = index_name or settings.text("MVP_ELASTICSEARCH_INDEX", "rag-mvp-chunks")
-        self.url = settings.text("MVP_ELASTICSEARCH_URL", "http://localhost:9200")
-        self.timeout = settings.integer("MVP_ELASTICSEARCH_TIMEOUT", 30)
+        self.index_name = index_name or settings.text('elasticsearch.index')
+        self.url = settings.text('elasticsearch.url')
+        self.timeout = settings.integer('elasticsearch.timeout')
 
     @property
     def client(self):
@@ -55,6 +55,7 @@ class ElasticsearchStore:
             "child_ids": {"type": "keyword"},
             "chunk_order": {"type": "integer"},
             "retrieval_eligible": {"type": "boolean"},
+            "preserve_structure": {"type": "boolean"},
             "source_span": {"type": "object", "enabled": False},
             "source_block_ids": {"type": "keyword"},
             "parent_char_start": {"type": "integer"},

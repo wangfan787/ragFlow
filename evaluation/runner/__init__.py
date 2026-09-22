@@ -1,4 +1,4 @@
-"""生产链路评测 Runner：只编排与录制，不复制 backend 算法（评测计划 §4.1）。
+"""生产链路评测 Runner：只编排与录制，不复制 backend 算法。
 
 模块结构：
 - production_adapter  组装生产组件，并把生产 payload 映射为冻结 run schema

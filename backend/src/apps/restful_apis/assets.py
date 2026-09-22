@@ -9,10 +9,11 @@ service = AssetService()
 
 
 @router.get("/assets/preview")
-async def preview_asset(request: Request, document_id: str, asset_id: str) -> Response:
+def preview_asset(request: Request, document_id: str, asset_id: str) -> Response:
     """原图预览：凭 document_id/asset_id 二次鉴权后返回原文件字节。
 
     客户端不能提交服务器本地路径；storage_key 只在后端内部使用。
+    同步文件读取用 def 端点走线程池。
     """
     claims = require_authenticated(request)
     data = service.preview(

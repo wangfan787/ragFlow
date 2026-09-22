@@ -16,6 +16,6 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/auth/login")
-async def login(req: LoginRequest)->dict:
+def login(req: LoginRequest) -> dict:
     data = login_with_password(req.username,req.password)
     return ok(data)

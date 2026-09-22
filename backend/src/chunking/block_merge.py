@@ -1,4 +1,4 @@
-"""按严格 token 上限构造内容守恒的父子块。"""
+"""正文按 token 预算切分；代码和表格可作为完整父子块保留。"""
 
 from __future__ import annotations
 
@@ -110,28 +110,34 @@ class BlockMergeStrategy:
         atoms: list[dict] = []
         for block in blocks:
             original = block.page_content
-            # 去除首尾空白，同时保留规范化文本在原块中的字符偏移。
-            leading = len(original) - len(original.lstrip())
-            normalized = original.strip()
-            if not normalized:
-                continue
             block_type = self._block_type(block)
-            pieces = self._splitter.split(
-                normalized,
-                target_tokens=config.parent_target_tokens,
-                max_tokens=config.parent_max_tokens,
-                structural_type=block_type,
+            preserve_structure = (
+                (block_type == "code" and config.preserve_code_block)
+                or (block_type == "table" and config.preserve_table_block)
             )
+            # 结构块保留原文；普通正文去除首尾空白并记录偏移。
+            leading = 0 if preserve_structure else len(original) - len(original.lstrip())
+            normalized = original if preserve_structure else original.strip()
+            if not normalized.strip():
+                continue
+            if preserve_structure:
+                pieces = [TextFragment(normalized, 0, len(normalized), block_type)]
+            else:
+                pieces = self._splitter.split(
+                    normalized,
+                    target_tokens=config.parent_target_tokens,
+                    max_tokens=config.parent_max_tokens,
+                    structural_type=block_type,
+                )
             for piece in pieces:
                 atoms.append(
                     {
                         "text": piece.text,
                         "block": block,
                         "block_type": block_type,
+                        "preserve_structure": preserve_structure,
                         "block_char_start": leading + piece.start,
-                        "block_char_end": leading + piece.end,
                         "continuation": piece.continuation,
-                        "split_by": piece.split_by,
                     }
                 )
         return atoms
@@ -154,7 +160,6 @@ class BlockMergeStrategy:
                     "parent_end": cursor,
                     "block": atom["block"],
                     "block_char_start": atom["block_char_start"],
-                    "block_char_end": atom["block_char_end"],
                 }
             )
         trace = {"chunk_role": "parent"}
@@ -184,29 +189,32 @@ class BlockMergeStrategy:
 
         for atom in atoms:
             block_type = atom["block_type"]
+            if atom["preserve_structure"]:
+                flush(block_type)
+                parent = self._make_parent([atom])
+                parent["preserve_structure"] = True
+                parents.append(parent)
+                continue
             # 图片块无条件原子（一图一块，不与相邻块合并）；超长的 VLM 描述
             # 仍由 _atomic_fragments 按 token 硬上限切分——切的是描述文字，
             # 不是图片本身（算法层QA Q6）。
-            preserve = (
-                (block_type == "code" and config.preserve_code_block)
-                or (block_type == "table" and config.preserve_table_block)
-                or block_type == "image"
-            )
+            preserve = block_type == "image"
             if (
                 (config.align_to_boundary and block_type in _PARENT_BOUNDARY_TYPES) or preserve
             ) and buffer:
                 flush(block_type)
 
             candidate_atoms = [*buffer, atom]
-            candidate = self._make_parent(candidate_atoms)["text"]
-            if buffer and self._counter.count(candidate) > config.parent_target_tokens:
+            candidate = "\n\n".join(item["text"] for item in candidate_atoms)
+            candidate_tokens = self._counter.count(candidate)
+            if buffer and candidate_tokens > config.parent_target_tokens:
                 flush()
                 candidate_atoms = [atom]
-                candidate = atom["text"]
-            if self._counter.count(candidate) > config.parent_max_tokens:
+                candidate_tokens = self._counter.count(atom["text"])
+            if candidate_tokens > config.parent_max_tokens:
                 raise RuntimeError("parent construction violated hard token budget")
             buffer = candidate_atoms
-            if preserve or self._counter.count(candidate) >= config.parent_target_tokens:
+            if preserve or candidate_tokens >= config.parent_target_tokens:
                 flush()
         flush()
         return parents
@@ -226,12 +234,16 @@ class BlockMergeStrategy:
 
     def _split_into_children(self, parent: dict, config: ChunkConfig) -> list[dict]:
         """在父块内部切出子块，并关联其来源块和父块坐标。"""
-        pieces = self._splitter.split(
-            parent["text"],
-            target_tokens=config.child_target_tokens,
-            max_tokens=config.child_max_tokens,
-            structural_type="paragraph",
-        )
+        if parent.get("preserve_structure"):
+            block_type = self._block_type(parent["source_blocks"][0])
+            pieces = [TextFragment(parent["text"], 0, len(parent["text"]), block_type)]
+        else:
+            pieces = self._splitter.split(
+                parent["text"],
+                target_tokens=config.child_target_tokens,
+                max_tokens=config.child_max_tokens,
+                structural_type="paragraph",
+            )
         children: list[dict] = []
         for piece in pieces:
             children.append(
@@ -247,6 +259,7 @@ class BlockMergeStrategy:
                         "continuation": piece.continuation,
                     },
                     "chunk_role": "child",
+                    "preserve_structure": parent.get("preserve_structure", False),
                 }
             )
         # 子块顺序拼接后必须完整还原规范化后的父块文本。

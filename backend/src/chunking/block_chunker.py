@@ -1,6 +1,5 @@
 """父子切片：保留正文、来源范围和父块内坐标，输出 LangChain Document。"""
 
-from dataclasses import asdict
 import hashlib
 import json
 
@@ -75,14 +74,14 @@ class BlockChunker:
         config = build_chunk_config(chunk_config)
         # 配置摘要进入 chunk_id，便于区分不同切分策略生成的数据。
         profile_hash = hashlib.sha256(
-            json.dumps(asdict(config), sort_keys=True, separators=(",", ":")).encode("utf-8")
+            json.dumps(config.model_dump(), sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()[:12]
         merged = self._merge.merge(parse_blocks, config)
         doc_id = next(
             (str(block.metadata.get("doc_id", "doc_unknown")) for block in parse_blocks if block.page_content.strip()),
             "doc_unknown",
         )
-        identified = [(order, item, f"{doc_id}_v2_{profile_hash}_{order}")
+        identified = [(order, item, f"{doc_id}_v3_{profile_hash}_{order}")
                       for order, item in enumerate(merged, start=1)]
         # 先建立父子 ID 关系，再统一组装最终 Document。
         parents = {id(item): chunk_id for _, item, chunk_id in identified if item["chunk_role"] == "parent"}
@@ -114,7 +113,7 @@ class BlockChunker:
                     "page_no": first.get("page_no"),
                     "chunk_role": role, "parent_id": item.get("parent_id"),
                     "child_ids": children.get(chunk_id, []), "chunk_order": order,
-                    "chunk_profile_version": "parent-child-v2", "chunk_profile_hash": profile_hash,
+                    "chunk_profile_version": "parent-child-v3", "chunk_profile_hash": profile_hash,
                     "retrieval_eligible": role == "child",
                     "source_span": span,
                     "source_block_ids": list(dict.fromkeys(
@@ -126,6 +125,7 @@ class BlockChunker:
                     "token_count": self._counter.count(text),
                     "trace": {key: value for key, value in item.get("trace", {}).items() if key != "chunk_role"},
                     "embedding_input_budget": config.embedding_input_budget,
+                    "preserve_structure": item.get("preserve_structure", False),
             }
             for key in _PASSTHROUGH_METADATA_KEYS:
                 value = first.get(key)

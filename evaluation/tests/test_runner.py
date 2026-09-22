@@ -1,6 +1,5 @@
 """P0-B：生产 Runner 契约（索引 manifest / run 录制 / 参数扫描锁定）。
 
-验收对应 docs/plan/评测计划.md E1-B、E1-C 与 docs/plan/算法层QA.md §7.2：
 - index_dataset 只调用生产 IngestionPipeline，CRUD doc_id 原样保留；
 - run_retrieval / run_qa 产出符合冻结 schema 的 JSONL，可被 score_run 评分；
 - 逐题错误如实记录（no_evidence / error），不静默丢题；
@@ -209,12 +208,14 @@ def isolated_eval_dirs(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# E1-B：index_dataset
+# index_dataset
 # ---------------------------------------------------------------------------
 
-def test_index_dataset_preserves_crud_doc_ids_and_writes_manifest(tmp_path: Path) -> None:
+def test_index_dataset_preserves_crud_doc_ids_and_writes_manifest(tmp_path: Path, monkeypatch) -> None:
+    from evaluation.runner import index_dataset as index_module
     from evaluation.runner.index_dataset import index_dataset, write_manifest
 
+    monkeypatch.setattr(index_module, "git_commit", lambda: "a" * 40)
     dataset = _build_dataset(tmp_path)
     stack = _build_stack()
     manifest = index_dataset(dataset, stack)
@@ -226,7 +227,7 @@ def test_index_dataset_preserves_crud_doc_ids_and_writes_manifest(tmp_path: Path
     assert manifest["records_indexed"] > 20  # 父块+子块
     assert manifest["es_index"] == "eval-fixture"
     assert manifest["dataset_manifest_sha256"]
-    assert manifest["git_commit"] not in ("", "unavailable")
+    assert manifest["git_commit"] == "a" * 40
     assert manifest["chunk_config"]["child_target_tokens"] > 0
 
     indexed_doc_ids = {record.metadata["doc_id"] for record in stack.store.records.values()}
@@ -255,7 +256,7 @@ def test_index_dataset_records_per_document_failures(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# E1-B：run_retrieval / run_qa
+# run_retrieval / run_qa
 # ---------------------------------------------------------------------------
 
 def test_run_retrieval_records_valid_runs_for_all_variants(tmp_path: Path, isolated_eval_dirs) -> None:
@@ -345,7 +346,7 @@ def test_run_qa_maps_no_evidence_errors_per_query(tmp_path: Path, isolated_eval_
 
 
 # ---------------------------------------------------------------------------
-# E1-C：sweep 与锁定
+# sweep 与锁定
 # ---------------------------------------------------------------------------
 
 def test_sweep_locks_config_and_applies_rerank_rule(tmp_path: Path, isolated_eval_dirs) -> None:

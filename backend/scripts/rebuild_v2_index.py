@@ -1,6 +1,6 @@
 """Rebuild all registered documents into a separate v2 physical ES index.
 
-This command never changes backend/config.yaml, swaps an alias, or deletes the
+This command never changes config/*.yaml, swaps an alias, or deletes the
 old index. It only builds and validates the explicitly named target index.
 """
 
@@ -27,7 +27,7 @@ from backend.src.infrastructure.models import build_embeddings
 def rebuild(index_name: str, *, limit: int | None = None, dry_run: bool = False) -> dict:
     if limit is not None and limit <= 0:
         raise ValueError("limit must be positive")
-    current = settings.text("MVP_ELASTICSEARCH_INDEX", "rag-mvp-chunks")
+    current = settings.text('elasticsearch.index')
     if index_name == current:
         raise ValueError("v2 rebuild target must differ from the active physical index")
     registered = list_documents()

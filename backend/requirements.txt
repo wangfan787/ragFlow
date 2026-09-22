@@ -6,7 +6,7 @@ langchain-core>=1.6.2,<2
 langchain-openai>=1.6.0,<2
 tiktoken>=0.7,<1
 PyYAML>=6,<7
-python-dotenv>=1,<2
+pydantic>=2.10,<3
 python-multipart>=0.0.18,<1
 # 当前 localhost:9200 不可达，按首版规格暂选 8.x；联调前核对服务主版本。
 elasticsearch>=8.12,<9
@@ -18,6 +18,8 @@ httpx>=0.27,<1
 # 部署机还需预下载 NLTK 数据：
 #   python -m nltk.downloader punkt_tab averaged_perceptron_tagger_eng
 unstructured[md,pdf]>=0.18,<1
+# Markdown 结构保护：代码围栏、缩进代码和 GFM 表格的原文边界。
+markdown-it-py>=3,<5
 
-# 阶段迁移期间的旧路由导入依赖；07 清理消费者后删除。
+# 登录 JWT。
 PyJWT>=2.9,<3

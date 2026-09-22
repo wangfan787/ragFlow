@@ -76,6 +76,8 @@ def test_strict_chunking_conserves_unpunctuated_code_and_table():
         child_target_tokens=12,
         child_max_tokens=16,
         embedding_input_budget=64,
+        preserve_code_block=False,
+        preserve_table_block=False,
     )
     for block_type, text in (
         ("paragraph", "无标点中文" * 100),
@@ -225,7 +227,7 @@ def test_indexer_does_not_publish_invalid_model_vectors(vectors):
     model = FakeEmbedding()
     model.embed_documents = lambda texts: vectors
     store = FakeStore()
-    chunks = [_document("body", chunk_id="child", retrieval_eligible=True)]
+    chunks = [_document("body", chunk_id="child", retrieval_eligible=True, embedding_input_budget=192)]
     with pytest.raises(ValueError):
         EmbeddingIndexer(embedding_model=model, store=store).index("doc", chunks)
     assert store.upserted == []
@@ -259,7 +261,7 @@ def test_production_index_and_retrieval_build_langchain_only_when_called(monkeyp
     indexer = EmbeddingIndexer(store=FakeStore())
     retriever = embedding_retriever.EmbeddingRetriever(store=FakeStore())
     assert calls == []
-    indexer.index("doc", [_document(" body ", chunk_id="c", retrieval_eligible=True)])
+    indexer.index("doc", [_document(" body ", chunk_id="c", retrieval_eligible=True, embedding_input_budget=192)])
     retriever.retrieve("question")
     assert calls == ["build", "build"]
     assert model.inputs == [" body ", "question"]
@@ -347,13 +349,12 @@ class FakeAnswerModel:
 
 
 class FakeRouter:
-    last_trace = {}
 
     def __init__(self, chunk):
         self.chunk = chunk
 
-    def retrieve(self, question, retrieval_config=None):
-        return [self.chunk]
+    def retrieve_detailed(self, question, retrieval_config=None):
+        return [self.chunk], {}
 
 
 def test_qa_default_path_invokes_langchain_and_reuses_model(monkeypatch):
@@ -406,9 +407,8 @@ def test_qa_window_is_anchored_near_matched_child_and_citation_uses_prompt_windo
     service.context_limit_tokens = 1200
     service.completion_reserve_tokens = 200
     service.prompt_safety_tokens = 256
-    service.evidence_window_tokens = 200
     service.retriever = FakeRouter(chunk)
-    payload = service.query("尾部是什么")
+    payload = service.query("尾部是什么", qa_config={"evidence_window_tokens": 200})
     assert child_text in model.messages[1]["content"]
     assert payload["citations"][0]["primary_matched_child_id"] == "child"
     assert child_text in payload["citations"][0]["context_snippet"]
@@ -429,7 +429,7 @@ def test_qa_builds_separate_windows_for_distant_contributing_children():
         ],
     )
     service = QAService(model=FakeAnswerModel())
-    windows = service.window_builder.candidates([chunk], top_k=1, max_window_tokens=40)
+    windows = service.window_builder.candidates([chunk], max_window_tokens=40)
     assert len(windows) == 2
     assert "first-hit" in windows[0].page_content
     assert "second-hit" in windows[1].page_content
@@ -467,9 +467,17 @@ def test_qa_missing_coordinates_falls_back_to_child_without_snippet_guessing():
 
 
 def test_t2_preparation_emits_v2_chunk_mapping_with_fingerprint(tmp_path, monkeypatch):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
     from dataset import embed_t2retrieval
     from backend.src.apps.services.benchmark_adapter import ProductionRagAdapter
 
+    pq.write_table(pa.Table.from_pylist([
+        {"_id": "plain", "title": "Plain", "text": "First paragraph.\n\nSecond paragraph."},
+        {"_id": "html", "title": "HTML", "text": "<h1>Title</h1><p>Answer text.</p>"},
+    ]), tmp_path / "corpus.parquet")
+    monkeypatch.setattr(embed_t2retrieval, "DATASET_DIR", tmp_path)
     monkeypatch.setattr(embed_t2retrieval, "OUTPUT_DIR", tmp_path)
     manifest, progress = embed_t2retrieval._prepare_manifest(
         "corpus", ProductionRagAdapter(), 2
@@ -478,6 +486,7 @@ def test_t2_preparation_emits_v2_chunk_mapping_with_fingerprint(tmp_path, monkey
     assert progress["complete"] is True
     assert progress["schema_version"] == "t2-production-rag-v2"
     assert records and all(row["chunk_id"] and row["doc_id"] for row in records)
+    assert {row["doc_id"] for row in records} == {"plain", "html"}
     assert all(row["embedding_text"] for row in records)
 
 

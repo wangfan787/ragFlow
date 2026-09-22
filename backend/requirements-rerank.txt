@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# Optional CrossEncoder runtime dependency.
+sentence-transformers>=5,<7

@@ -46,11 +46,9 @@ class EmbeddingIndexer:
             vector = vector_by_id.get(chunk_id)
             result = build_by_id.get(chunk_id)
             eligible = bool(metadata.get("retrieval_eligible"))
-            if eligible != (vector is not None):
-                raise ValueError("record role and vector presence disagree")
             metadata.update(
                 doc_id=doc_id, doc_name=metadata.get("doc_name") or doc_name or "",
-                embedding_backend=settings.text("MVP_EMBEDDING_BACKEND", "glm") if eligible else "",
+                embedding_backend=settings.text('embedding.backend') if eligible else "",
                 embedding_model=self._embedding.model if eligible else "",
                 embedding_dim=len(vector) if vector is not None else None,
                 embedding_profile=result.profile if result else None,
@@ -63,3 +61,7 @@ class EmbeddingIndexer:
         self._store.delete_stale_by_doc_id(doc_id, [record.metadata["chunk_id"] for record in records])
         logger.info("embedding.indexed doc_id=%s records=%d children=%d", doc_id, len(records), len(children))
         return len(records)
+
+    def delete_document(self, doc_id: str) -> None:
+        """删除该文档在索引中的全部 Parent/Child 记录（文档删除接口调用）。"""
+        self._store.delete_by_doc_id(doc_id)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 import hashlib
 import json
 import logging
@@ -24,8 +23,8 @@ from backend.src.config.settings import settings
 from backend.src.infrastructure.models import build_embeddings
 
 LOGGER = logging.getLogger("t2retrieval_embedding_v2")
-# 默认全量目录；跑 1 万条子集时显式导出 T2_DATASET_DIR，防止误把全量送去 embedding。
-DATASET_DIR = Path(os.environ.get("T2_DATASET_DIR") or ROOT / "dataset" / "T2Retrieval")
+
+DATASET_DIR = (ROOT / settings.text("dataset.t2_dir")).expanduser().resolve()
 OUTPUT_DIR = DATASET_DIR / "embeddings-v2"
 SCHEMA_VERSION = "t2-production-rag-v2"
 ADAPTER_ALGORITHM_VERSION = "production-adapter-v2.3-child-body"
@@ -50,7 +49,7 @@ def _fingerprint(name: str, total: int, profile_hash: str, source_sha256: str) -
 def _profile_hash(adapter: ProductionRagAdapter) -> str:
     raw = json.dumps(
         {
-            "chunk": asdict(adapter.chunk_config),
+            "chunk": adapter.chunk_config.model_dump(),
             "embedding": adapter.text_builder.profile,
             "algorithm_version": ADAPTER_ALGORITHM_VERSION,
         },
@@ -350,7 +349,7 @@ def _embed_manifest(name: str, model, manifest_path: Path, prepared: dict, batch
     total = int(prepared["artifact_rows"])
     dimension = int(getattr(model, "dimensions", 0) or 0)
     if dimension <= 0:
-        raise ValueError("MVP_EMBEDDING_DIMENSIONS must be set for persistent artifacts")
+        raise ValueError("embedding.dimensions must be set for persistent artifacts")
     prefix = OUTPUT_DIR / name
     mmap_path = prefix.with_suffix(".f32.mmap")
     metadata_path = prefix.with_suffix(".metadata.json")
@@ -374,7 +373,7 @@ def _embed_manifest(name: str, model, manifest_path: Path, prepared: dict, batch
         "dtype": "float32",
         "dimension": dimension,
         "model": model.model,
-        "backend": settings.text("MVP_EMBEDDING_BACKEND", "glm"),
+        "backend": settings.text('embedding.backend'),
         "mapping_file": manifest_path.name,
         "mapping_bytes": int(prepared["mapping_bytes"]),
         "mapping_sha256": str(prepared["mapping_sha256"]),
@@ -492,7 +491,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     adapter = ProductionRagAdapter()
     model = None if args.prepare_only else build_embeddings()
-    batch_size = args.batch_size or settings.integer("MVP_EMBEDDING_BATCH_SIZE", 16, positive=True)
+    batch_size = args.batch_size or settings.integer('embedding.batch_size', positive=True)
     splits = ("corpus", "queries") if args.split == "both" else (args.split,)
     for split in splits:
         manifest, prepared = _prepare_manifest(split, adapter, args.limit)

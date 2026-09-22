@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta, timezone
-import os
 import time
 from pathlib import Path
 
@@ -7,9 +6,9 @@ from fastapi import HTTPException,Request
 import jwt
 
 from backend.src.config.data_paths import uploads_dir
+from backend.src.config.settings import settings
 
 _TOKEN_ALG = "HS256"
-_TOKEN_TTL_SECONDS = 24*60*60
 _DEMO_ROLE = "authenticated"
 
 
@@ -20,16 +19,16 @@ _DEMO_ROLE = "authenticated"
 """
 
 def _demo_username()->str:
-    return os.getenv("DEMO_USERNAME","demo")
+    return settings.text("auth.username")
 
 def _demo_password()->str:
-    return os.getenv("DEMO_PASSWORD","demo123")
+    return settings.text("auth.password")
 
 def _jwt_secret()->str:
-    return os.getenv("JWT_SECRET","jwt-secret")
+    return settings.text("auth.jwt_secret")
 
 def create_access_token(subject:str,role:str=_DEMO_ROLE)->str:
-    exp = datetime.now(timezone.utc) + timedelta(seconds=_TOKEN_TTL_SECONDS)
+    exp = datetime.now(timezone.utc) + timedelta(seconds=settings.integer("auth.token_ttl_seconds", positive=True))
     payload = {
         "sub" :subject,
         "role" : role,
@@ -42,11 +41,11 @@ def decode_access_token(token:str) ->dict:
 
 def login_with_password(username:str, password:str)->dict:
     if username!= _demo_username() or password!= _demo_password():
-        raise ServiceError("UNAUTHORIZED","用户名或密码错误",{"reason":"bad_credentials"})
+        raise ServiceError("UNAUTHORIZED","用户名或密码错误",{"reason":"bad_credentials"},status_code=401)
     return{
         "access_token": create_access_token(subject=username),
         "token_type": "Bearer",
-        "expires_in": _TOKEN_TTL_SECONDS,
+        "expires_in": settings.integer("auth.token_ttl_seconds", positive=True),
         "role":_DEMO_ROLE,
     }
 
@@ -91,12 +90,15 @@ class ServiceError(Exception):
     code: 错误的标记
     message: 对于code的描述
     details：其他信息，比如request_id等
+    status_code: 映射到 HTTP 状态码（400/404/409/413/422/502 等），
+        由 main.py 的全局处理器直接使用；未显式指定时按请求错误 400 处理。
     """
-    def __init__(self, code:str,message:str,details:dict|None = None)->None:
+    def __init__(self, code:str,message:str,details:dict|None = None,*,status_code:int = 400)->None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.details = details or {}
+        self.status_code = status_code
 
 
 def now_ms()->int:
@@ -143,29 +145,3 @@ def ensure_upload_dir() ->Path:
     directory = get_upload_dir()
     directory.mkdir(parents=True,exist_ok=True)
     return directory
-
-
-# =============================================================
-# 演示：直接运行本文件（python common_service.py）时执行
-# 展示 create_access_token 的返回值长什么样
-# =============================================================
-if __name__ == "__main__":
-    token = create_access_token(subject="demo")
-
-    print("=" * 60)
-    print("1) create_access_token(...) 的返回值就是一段字符串：")
-    print(token)
-    print("=" * 60)
-
-    header_b64, payload_b64, signature_b64 = token.split(".")
-    print("2) 它由 3 段用 '.' 拼接而成（都是 base64url 编码，明文可读）：")
-    print("   header    :", header_b64)
-    print("   payload   :", payload_b64)
-    print("   signature :", signature_b64)
-    print("=" * 60)
-
-    claims = decode_access_token(token)
-    print("3) 服务端用同一把密钥 decode_access_token 解回来的 claims：")
-    for k, v in claims.items():
-        print(f"    {k:6}: {v}")
-    print("=" * 60)

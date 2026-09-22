@@ -34,10 +34,12 @@ class HybridRouter:
         self.fusion = HybridFusion()
         self.reranker = RuleReranker()
         self._cross_encoder: CrossEncoderReranker | None = None
-        self.last_trace: dict = {}
 
     def _reranker_for_backend(self, backend: str):
-        if backend != "cross-encoder":
+        """
+        选择相应的reranker
+        """
+        if backend == "rule":
             return self.reranker
         if self._cross_encoder is None:
             self._cross_encoder = CrossEncoderReranker()
@@ -65,9 +67,8 @@ class HybridRouter:
             parent_rows = self.embedding_retriever.query_by_ids(list(child_parent_ids))
             for parent_record in parent_rows:
                 payload = {**parent_record.metadata, "content": parent_record.page_content}
-                pid = str(payload.get("chunk_id") or parent_record.metadata["chunk_id"] or "")
-                if pid:
-                    parent_payloads[pid] = payload
+                pid = payload["chunk_id"]
+                parent_payloads[pid] = payload
         failed_lookups = len(child_parent_ids) - len(parent_payloads)
         families: dict[str, list[dict]] = {}
         for row in children:
@@ -79,7 +80,7 @@ class HybridRouter:
         for family_id, members in families.items():
             members = sorted(
                 members,
-                key=lambda row: float(row.get("score", row.get("fused_score", 0.0))),
+                key=lambda row: float(row["score"]),
                 reverse=True,
             )
             primary = dict(members[0])
@@ -91,7 +92,7 @@ class HybridRouter:
             for row in members:
                 entry = {
                     "chunk_id": str(row["chunk_id"]),
-                    "score": float(row.get("score", row.get("fused_score", 0.0))),
+                    "score": float(row["score"]),
                     "vector_score": float(row.get("vector_score", 0.0)),
                     "keyword_score": float(row.get("keyword_score", 0.0)),
                     "fused_score": float(row.get("fused_score", 0.0)),
@@ -159,7 +160,7 @@ class HybridRouter:
 
         expanded_rows.sort(
             key=lambda r: (
-                float(r.get("score", r.get("fused_score", 0.0))),
+                float(r["score"]),
                 float(r.get("keyword_score", 0.0)),
             ),
             reverse=True,
@@ -261,7 +262,7 @@ class HybridRouter:
         eligible_rows = [
             item
             for item in ranked_rows
-            if float(item.get("score", item.get("fused_score", 0.0))) >= config.similarity_threshold
+            if float(item["score"]) >= config.similarity_threshold
         ]
 
         # small-to-big + 父子去重：子块召回后展开为父块全文，同 family 对贡献子块取均分。
@@ -269,8 +270,8 @@ class HybridRouter:
 
         results: list[Document] = []
         for item in eligible_rows[: config.top_k]:
-            score = float(item.get("score", item.get("fused_score", 0.0)))
-            fused_score = float(item.get("fused_score", score))
+            score = float(item["score"])
+            fused_score = float(item["fused_score"])
             rerank_score = item.get("rerank_score")
             metadata = {key: value for key, value in item.items() if key != "content"}
             metadata.update(
@@ -370,18 +371,15 @@ class HybridRouter:
                 {
                     "doc_id": str(item.get("doc_id", "")),
                     "chunk_id": str(item.get("chunk_id", "")),
-                    "score": round(float(item.get("score", item.get("fused_score", 0.0))), 4),
+                    "score": round(float(item["score"]), 4),
                     "keyword_score": round(float(item.get("keyword_score", 0.0)), 4),
                     "vector_score": round(float(item.get("vector_score", 0.0)), 4),
                 }
                 for item in ranked_rows
-                if float(item.get("score", item.get("fused_score", 0.0)))
+                if float(item["score"])
                 < config.similarity_threshold
             ][:10],
         }
-        # last_trace 仅供旧调试路径读取；正式调用方应使用返回的请求级 trace，
-        # 避免并发请求互相覆盖。
-        self.last_trace = trace
         logger.info(
             "retrieval.hybrid query=%r mode=%s vector_candidates=%d "
             "keyword_candidates=%d fused_candidates=%d "

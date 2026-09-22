@@ -1,6 +1,6 @@
 # 算法层 QA 与可执行工作计划
 
-更新日期：2026-09-19。
+更新日期：2026-09-22。
 
 本文专门解释 `docs/plan/README.md` 算法层里容易产生歧义的术语、优先级和验收口径，并把讨论结果沉淀成后续可执行清单。
 
@@ -11,7 +11,7 @@
 | 问题 | 结论 |
 |---|---|
 | 统一解析引擎是不是已经构造完毕？ | 是。Markdown、PDF、HTML、TXT 已统一到 `UnstructuredParser`，当前工作区回归通过；干净环境安装、服务上传联调和冷/热启动耗时属于后续部署验收，不再算算法 P0。 |
-| 以前不是已经通过测试了吗？ | 是。2026-09-19 在 Conda `agent` 环境重跑 `backend/tests + evaluation/tests`，结果为 `102 passed`；它能证明当前代码契约，但不能替代真实 ES、真实模型和部署联调。 |
+| 以前不是已经通过测试了吗？ | 是。2026-09-21 在 Conda `agent` 环境重跑 `backend/tests + evaluation/tests`，结果为 `164 passed`；它能证明当前代码契约，但不能替代真实 ES、真实模型和部署联调。 |
 | 图片为什么要分块？ | 不切图片像素。图片保存为资产；`image block` 是图片在统一 Document 契约中的逻辑块。通常一图一块，只有过长的 VLM 文本描述才按文本切分。 |
 | VLM 描述是什么？ | 核心确实是把图片交给视觉模型，让它输出可检索的文字；但还需要资产保存、提示词约束、结构化输出、失败处理、索引和引用回传。 |
 | 来源坐标为什么是 P0？ | “精度诚实 + 最小回归集”曾是 P0，目前已实现并通过回归；扩大到 20–30 篇并生成比例报告属于 P1。 |
@@ -22,6 +22,8 @@
 | `vector_weight=1` 是不是 Vector-only？ | 不是；不过这个缺口已修复。现在使用 `retrieval_mode=vector`，测试已证明未选中的 BM25 通道调用次数为 0。 |
 | 为什么 Evidence Window 还要改配置接口？ | 这个缺口已修复。`QAService.query()` 已接受请求级 `QAConfig`，可在同一 Runner 中逐题比较 `child_only/window/full_parent`。 |
 | 为什么总延迟还不够？ | 这个缺口也已修复。QA 已返回请求级分阶段耗时和真实可得的 usage；剩余工作只是由 Runner 原样录制并形成真实 P50/P95、token 与成本基线。 |
+| 为什么 2026-09-22 消融里三种 Rerank 都没有净收益？ | 三个原因叠加：候选池饱和（Dev 30 题里 26 题不开 Rerank 就已 recall@10 满分）；rule 档与首排 keyword 通道信号同源、且 0.1 加成上限小于全部首尾分差（最小 0.108）；CrossEncoder 有真实尾部增益但"整分替换"实现把它转化为头部损失，且 30 题差值置信区间跨零。详见 Q28–Q30。 |
+| CRUD-RAG-mini 还能不能测出 Rerank？ | 能测检索模式级差异（Test 120 题上旧 rerank 实验对 +7.5pt recall@10、CI 不含零），测不了强配置之间 ±5pt 的小差异。补 CI 纪律、扩池子把基线 recall@10 压回工作区间后重测，见 Q30–Q31。 |
 
 ---
 
@@ -34,7 +36,7 @@
 - Markdown、PDF、HTML、TXT 已统一由 `UnstructuredParser` 承接，`parser_factory.py` 已接入统一实现。
 - PDF 相关重依赖按需加载，并已规避只读环境中的 Numba 缓存初始化问题。
 - 回归覆盖标题、列表、代码块、表格文本、frontmatter、HTML 实体、重复文本回定位、非法 UTF-8 和 PDF 文本提取等关键行为。
-- 2026-09-19 在 Conda `agent` 环境运行 `python -m pytest backend/tests evaluation/tests -q`，结果为 `102 passed`。
+- 2026-09-21 在 Conda `agent` 环境运行 `python -m pytest backend/tests evaluation/tests -q`，结果为 `164 passed`。
 
 因此状态应写为：
 
@@ -50,7 +52,7 @@
 2. 按真实启动方式完成一次“上传 → 解析 → 分块 → 入库”，记录失败阶段和错误语义。
 3. 对小、中、大样例记录首次/热启动耗时、block 数和峰值内存，形成 P50/P95 基线。
 
-### Q3：`102 passed` 能证明什么？
+### Q3：`164 passed` 能证明什么？
 
 | 证据 | 能证明 | 不能证明 |
 |---|---|---|
@@ -514,82 +516,57 @@ trace.usage:
 
 该缺口已于 2026-09-18 修复：计时使用单调时钟，QA payload 已返回请求级 config/timings/usage；供应商未返回的字段记 `unavailable`，不补零。`last_trace` 仅保留兼容调试，正式评测使用 `retrieve_detailed()` 返回的请求局部 Trace。
 
----
+### Q28：2026-09-22 受控 Rerank 消融测了什么，结果如何？
 
-## 7. 合并后的算法层工作计划
+> 历史实验记录：以下四组结果对应当时的代码。项目收尾已移除 `rule-jieba` 实验后端，保留原始本地 run/score/report；一次性消融脚本已移除，当前运行时保留 `rule` 与 `cross-encoder`。Q29–Q31 是当时的分析与候选方案，不代表已验证的因果结论或必须实施的功能。
 
-旧计划把解析验收、来源坐标、检索接口、多个参数实验分别列成 P0，导致同一条生产链被重复计数。2026-09-19 重新核对当前代码并在 Conda `agent` 环境运行 `backend/tests + evaluation/tests`，结果为 `102 passed`。当前状态合并如下。
+四组对照共用同一候选池与请求配置（`candidate_top_k=30`、`rerank_top_n=30`、hybrid 0.75/0.25，Dev 30 题；CrossEncoder 档显式配置 `BAAI/bge-reranker-base`），产物在 `evaluation/reports/generated/dev_rerank_ablation.json` 与 `evaluation/scores/dev_retrieval_rerank_*.score.json`：
 
-### 7.1 已完成，不再列入 P0 待办
+| 组 | MRR@10 | Hit@1 | Recall@3 | Recall@10 | nDCG@10 | P50 延迟 |
+|---|---|---|---|---|---|---|
+| none（不重排） | **0.892** | **0.833** | 0.767 | 0.933 | 0.856 | 44ms |
+| rule_char_bigram | 0.857 | 0.767 | 0.828 | 0.972 | 0.873 | 40ms |
+| rule_jieba | 0.857 | 0.767 | 0.839 | 0.972 | 0.874 | 42ms |
+| cross_encoder | 0.846 | 0.733 | **0.861** | **0.978** | **0.876** | 416ms |
 
-| 能力 | 完成证据 | 后续非阻塞事项 |
-|---|---|---|
-| 统一解析与来源追踪 | md/pdf/html/txt 统一走 `UnstructuredParser`；Numba 缓存问题已规避；重复文本、HTML 实体、非法 UTF-8、嵌套代码、表格文本和来源精度分级有回归 | `P1` 补部署 bootstrap、冷/热耗时和 20–30 篇精度分布报告 |
-| 父子分块与 Embedding | 硬 token 上限、Parent/Child 内容守恒、坐标投影、profile hash、只嵌 Child 及向量合法性有回归 | 失败数据触发后再比较 profile 或 Embedding 输入模板 |
-| 离线评测基础设施 | CRUD-RAG Mini 1,000 文档/150 问题、确定性 validator/scorer/report 已完成并验证可复现 | 真实 run 由剩余 P0-B 生成 |
-| 生产评测接口 | `retrieval_mode`、`rerank_top_n`、请求级 `QAConfig`、请求级 config/timings/usage Trace 已实现并测试 | Runner 只负责编排与录制，不再复制算法 |
+统一模式是"头部变差、尾部变好"。以 qrels 为金标准的逐题金文档名次对比：cross_encoder 使 4 题变差（1→2、1→2、1→3、2→5）、2 题变好（6→2、4→2）、24 题不变；rule 两档各为 4 差 / 1 好 / 25 不变。四组 `error_count`、`fallback_count` 均为 0，排除"模型失败退回原排序"造成的假差异。
 
-### 7.2 两个 P0 工作包：均已实现（2026-09-19）
+### Q29：为什么三种 Rerank 看起来都不起作用？
 
-#### P0-A：Markdown 图片/VLM 最小闭环 —— √ 已实现并回归验证
+三个机制叠加，与 Reranker 本身的质量无关：
 
-要求与落实情况：
+1. **候选池饱和，没有表演舞台。** 不开 Rerank 时 Dev 30 题里 26 题金文档已全部进入 top-10，任何 Reranker 的可见增益上限就是剩下 4 题。
+2. **rule 档：信号冗余 + 物理上限，结构性惰性。** 其一，hybrid 首排已含 0.25 权重的词项匹配通道，rule 重排再次度量字面覆盖率，属同族信号二次注入，信息增量趋近于零。其二，加成上限为 `0.1 × coverage`（`backend/src/infrastructure/rule_reranker.py`），而 none 档 30 题第 1 名与第 10 名融合分差最小值为 0.108、中位数 0.236——**全部大于 0.1，rule 档在数学上不可能把任何第 10 名以后的候选提到第 1 名**，只能在分差小于 0.1 的中段翻弄。换 jieba 分词器后 25/30 题 top-10 排序确实变了，但金文档名次决策与 char-bigram 完全相同（4 差 / 1 好 / 25 不变）：分词粒度只改变非金文档之间的"空转"顺序，不改变任何指标相关的决策。
+3. **cross_encoder：有真实的新信息，但被实现浪费。** 交叉注意力语义匹配是首排不具备的信息，也是唯一在尾部做出大动作的档位（Recall@3 +9.4pt、nDCG@10 +2pt 全线正向）；但 `cross_encoder_reranker.py` 将交叉编码器分数**整分替换**融合分（`"score": score`），丢弃 dense 首排的头部信息，换来 4 题金文档从第 1 掉到第 2~5 名。同时 Dev 仅 30 题，Recall@10 差值 +4.4pt 的配对 bootstrap 95% CI 为 [0.000, 0.100]，跨零不显著——**不是没效果，是当前基准量不出这个量程**。
 
-- 只支持 Markdown 相对路径本地 PNG/JPEG/WebP，不顺带实现 HTML/PDF 图片或 OCR；
-  → `backend/src/parsing/markdown_images.py`：URL/绝对路径/`..` 穿越/不支持类型/缺文件全部显式 skipped 并带原因，围栏代码块中的图片语法不计。
-- 资产读取必须基于 `document_id/asset_id/current_user_id` 鉴权，拒绝任意路径和 `..` 穿越；
-  → `backend/src/assets/asset_store.py`：`AssetRegistry.authorized_asset()` 单条 JOIN 同时校验资源、文档归属与 owner；`AssetFileStore` 的 storage_key 读取前确认仍在资产根目录内。
-- 原图按 SHA256 保存，VLM 只生成受 schema 约束的描述文字；
-  → `AssetFileStore.save()` 幂等去重；`vlm_describer.py` 要求 JSON（ocr_text/subjects/key_facts/chart_trends/uncertainties）并程序拼装 `page_content`。
-- image 作为原子 block，描述进入分块/Embedding，`asset_id/document_id` 透传到 Citation；
-  → `BlockMergeStrategy` 无条件 preserve image；`BlockChunker` 透传 `asset_id` 等键；`CitationService` 与 `HybridRouter.matched_children` 携带 `asset_id`。
-- 预览再次鉴权；VLM 失败保留资产和失败状态，不伪造描述；
-  → `GET /assets/preview`（`AssetService.preview`）；失败路径在 assets 表记 `failed` 并保留占位正文。
-- 验收有权限、无权限、路径穿越、重复图片和失效资源；
-  → `backend/tests/{parsing/test_markdown_images, chunking/test_image_blocks, services/test_image_pipeline, services/test_asset_preview}.py` 共 21 项。
+可复用的面试口径：
 
-剩余归 P1：真实 VLM 模型（`MVP_VISION_LLM_*`）联调、线上伴随图片上传通道；HTML/PDF 图片与 OCR 维持不做。
+> 规则重排与首排 keyword 通道信号同源、且 0.1 加成上限小于首尾分差，结构性惰性；换 jieba 只改变非金文档间的空转排序，金文档决策纹丝不动；CrossEncoder 有真实信息增量（尾部指标全线上升），但被整分替换实现浪费在破坏头部上，且饱和的千篇基准加 30 题样本不足以让它显形。
 
-#### P0-B：生产 Runner、baseline 与一次参数锁定 —— Runner 已实现，真实全量 run 待执行
+### Q30：CRUD-RAG-mini 基准的分辨力边界在哪里？
 
-- `evaluation/runner` 只调用生产 `IngestionPipeline/HybridRouter/QAService`；
-  → `production_adapter.build_stack()` 组装共享评测 store 的生产组件，`run_retrieval` 不调 Chat，`run_qa` 走完整生产链路；Runner 不复制任何算法。
-- 建独立评测索引和 index manifest，保存 dataset/Git/config/model/profile 指纹；
-  → `index_dataset.py` 写独立索引 + `indexes/*.index_manifest.json`，CRUD 原始 doc_id 原样保留，逐文档失败显式记录。
-- 录制 Vector、Hybrid Weighted Sum、Hybrid+Rerank，以及 child/window/full-parent 的真实 run；
-  → `DEFAULT_RETRIEVAL_VARIANTS`（vector/keyword/hybrid/hybrid_rerank）与 `DEFAULT_QA_VARIANTS`（三种 evidence mode）；run 行内嵌 dataset/Git/config/model 指纹与请求级 timings/usage。
-- 只在 Dev 扫 `candidate_top_k/top_k/threshold/vector_weight/rerank_top_n/evidence_window_tokens`，避免无边界组合；
-  → `sweep.py` 单变量轴扫描（检索层不调 Chat；证据层含 window tokens，仅 Dev），越界组合在锁定前钳制。
-- 锁定后在 Test 各运行一次，生成机器可读 score、Markdown 报告和失败案例；
-  → 锁定产物 `evaluation/locks/locked_config.json` + `sweep_summary.md`；run 自动产出 `scores/*.json` 与 `reports/generated/*.md`（复用 E0 scorer/report）。Test 执行为剩余动作。
-- Rerank 无稳定收益则保持默认关闭；Weighted Sum 未暴露刻度问题则不实现 RRF。
-  → `decide_rerank()`：recall@10 增益 ≥ 1pp 且 mrr@10 不下降才默认开启，否则锁定配置剥离 rerank 覆盖。
+语料构成（`evaluation/build_dataset.py`）：1000 篇 = 300 篇金文档 + 150 篇困难负例（按词重叠挑选）+ 550 篇随机填充。
 
-验证：`evaluation/tests/test_runner.py` 8 项（替身 store/embedding/chat）覆盖 manifest、run schema、no_evidence 映射、扫描锁定与 rerank 规则；另用真实 ES + embedding 完成 20 篇索引与 dev 检索 smoke（`rag-eval-smoke` 索引，212 条记录）。**2026-09-19 真实 run 已全部执行**（全量 1,000 篇索引 → Dev 扫描锁定 → Test 检索与 QA 各模式运行一次，零失败）：锁定配置 Test 召回 97.5%（默认 hybrid 88.2%、纯向量 92.4%）、evidence recall 93.1%、引用正确率 96.7%（full_parent）、P95 2.3s，全程成本约 ¥2。过程与数字详见 [`调参实录.md`](调参实录.md)。
+**能测的**：检索模式级差异。Test 120 题上 hybrid 0.882 < vector 0.924 < locked 0.975（Recall@10）；同首排配置、仅差 rerank 开关的旧实验对（rule 后排、`rerank_top_n=10`）测出 +7.5pt Recall@10，配对 bootstrap 95% CI [+0.039, +0.117]，不含零，显著。
 
-### 7.3 P1：P0 稳定后再做
+**测不了的**：两个强配置之间 ±5pt 的小差异——恰是 Rerank 精调与重排模型升级所在的区间。原因有二：池子小且随机干扰占多数，dense 首排近乎饱和（Dev 26/30 满分；locked 已到 0.975，headline 指标仅剩 2.5pt 理论空间）；每题金文档只有 1~3 个，Recall@10 每题只能取 0、1/3、1/2、2/3、1 等离散值，30 题平均后颗粒极粗。
 
-- 清理无消费者 metadata，并扩充解析/span 质量报告；
-- 接入 `question_kwd/question_tks` 等索引侧增强并评测口语问题切片；
-- 接入指代消解与口语规范化查询改写，建设多轮/歧义评测；
-- 多检索通道并行与失败隔离；
-- 经人工校准的 Faithfulness、Answer Correctness、Context Precision 等 Judge 指标。
+因此在该基准上的敏感指标是 **Hit@1（0.833）、Recall@1（0.506）、MRR@10（0.892）**——它们仍有头寸；Q28 消融的退化只在头部指标上显现，与此一致。配套纪律：比较两个配置必须报配对 bootstrap CI，**CI 跨零不改默认配置**。
 
-### 7.4 P2：失败证据触发后再做
+### Q31：下一步候选动作（2026-09-22 分析结论，待确认后执行）
 
-- 针对 code/table 的新 chunk profile；
-- Weighted RRF、Embedding 输入模板消融；
-- HyDE、Step-back、查询拆分；
-- OCR/hi_res、HTML/PDF 图片、知识图谱、联网搜索和 Agent/MCP。
+1. **分数混合替代整分替换**：`final = α × rerank分 + (1−α) × 原融合分`，α 做成请求级配置，与 `rerank_top_n` 同路数；`cross_encoder_reranker.py` 与 `rule_reranker.py` 同改。验收标准：Dev 扫 α ∈ {0.3, 0.5, 0.7}，**MRR 不低于 none 且 Recall@10 不低于 none** 才换默认值，赢的 α 上 Test 确认。
+2. **`score_run.py` 补配对 bootstrap CI 输出**，零成本落实 Q30 的 CI 纪律。
+3. **扩池重建基准**：复用 query-first 抽样（金文档强制入池）与现有困难负例逻辑，`corpus_size` 扩到 5000~10000，目标把基线 Recall@10 压回 0.6~0.75 工作区间，重新开放强配置区的分辨力。成本为重建索引与重跑冻结流程。
+4. **rule 重排降级**：作为排序器的价值已被 Q28–Q29 证伪，合理归宿是降级为 trace 观测信号或默认关闭；保留代码作为消融对照组。
 
-### 当前明确不做
-
-- 不为了面试展示同时购买或配置多个 Embedding 模型；
-- 不切割图片像素来适配文本 chunk；
-- 不在没有失败数据时维护多套 profile 或替换 Weighted Sum；
-- 不把 `102 passed` 写成真实 ES、模型或业务指标已经联调。
+一次只动一个变量：先做 1+2，在 CI 纪律下验证；3 的扩池与重排模型升级（如 bge-reranker-v2-m3）各自独立成轮，不与 1 混在同一轮实验。
 
 ---
+
+## 7. 算法层工作计划（统一指向 README）
+
+工作包状态、P0/P1/P2 待办与"明确暂不做"清单统一维护在 [`README.md`](README.md)：§4 能力表与近期目标、§7 实施路线、§8 明确暂不做。本文不再另行维护计划清单，避免双份清单漂移（2026-09-19 文档收敛时移除原 §7.1-7.4）；评测的执行契约、真实 run 记录与参数速查见 [`评测.md`](评测.md)。本文只保留问答本身——回答"为什么这样设计、怎么验证"。
 
 ## 8. 下一轮讨论入口
 

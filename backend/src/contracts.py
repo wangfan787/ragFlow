@@ -6,11 +6,8 @@ Document 已接入业务；下列 md-v1 字段提示随各阶段逐项落实。
 
 from __future__ import annotations
 
-import math
-from collections.abc import Sequence
 from typing import Literal, Protocol, TypedDict
 
-from langchain_core.documents import Document
 
 SCHEMA_VERSION = "md-v1"
 
@@ -78,43 +75,7 @@ class DocumentMetadata(TypedDict, total=False):
     window_end: int
 
 
-EmbeddingVector = list[float]
-
-
-def validate_embedding_vector(values: Sequence[float]) -> None:
-    """向量基础合法性；维度一致性与零向量等业务校验由 indexer 负责。"""
-
-    if not values:
-        raise ValueError("embedding vector must not be empty")
-    for value in values:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError("embedding vector contains a non-numeric value")
-        if not math.isfinite(float(value)):
-            raise ValueError("embedding vector contains a non-finite value")
-
-
-class EmbeddingModel(Protocol):
-    backend_name: str
-    model_name: str
-    dimensions: int | None
-    max_input_tokens: int | None
-
-    def encode(self, texts: Sequence[str]) -> list[EmbeddingVector]: ...
-
-
 class Reranker(Protocol):
     backend_name: str
 
     def rerank(self, query: str, chunks: list[dict]) -> list[dict]: ...
-
-
-class ChatModel(Protocol):
-    """问答/改写模型能力协议；completion_reserve_tokens 才是 API 的 max_tokens 语义。"""
-
-    model_name: str
-    context_limit_tokens: int
-    completion_reserve_tokens: int
-
-    def count_tokens(self, messages: Sequence[dict[str, str]]) -> int: ...
-
-    def complete(self, messages: Sequence[dict[str, str]]) -> str: ...

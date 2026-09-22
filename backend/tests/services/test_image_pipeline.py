@@ -1,6 +1,5 @@
 """P0-A：ImagePipeline 编排契约（资产保存 / VLM 成败 / skip 原因 / 交错）。
 
-验收对应 docs/plan/算法层QA.md §7.2 P0-A：
 - 原图按 SHA256 保存并登记归属（owner 随文档传入）；
 - VLM 失败保留资产与 failed 状态，不伪造描述；
 - 重复图片共享同一 asset（SHA256 去重）；

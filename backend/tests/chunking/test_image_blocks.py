@@ -1,6 +1,5 @@
 """P0-A：image block 的分块原子性与 asset_id 透传（chunk → citation）。
 
-验收对应 docs/plan/算法层QA.md §7.2 P0-A：
 - image 是原子块：一图一块，不与相邻文本合并成同一父块；
 - asset_id / description_status 等元数据从解析块透传到父块与子块；
 - 命中 image 子块时 Citation 返回 asset_id，文本块不携带该键。

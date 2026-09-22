@@ -8,7 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def data_dir() -> Path:
-    configured = Path(settings.text("MVP_DATA_DIR") or "data/md-rag").expanduser()
+    configured = Path(settings.text("data_dir")).expanduser()
     return (configured if configured.is_absolute() else REPO_ROOT / configured).resolve()
 
 

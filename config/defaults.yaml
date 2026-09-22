@@ -57,13 +57,15 @@ chunking:
 retrieval:
   top_k: 5 # 聚合后返回父块数
   candidate_top_k: 30 # 每个通道召回池大小
-  similarity_threshold: 0.1 # 子块最终评分最低阈值
+  similarity_threshold: 0.1 # 重排粒度上的最终分数阈值；未重排/失败回退时过滤 Child 融合分
   vector_weight: 0.75 # 向量权重，与 BM25 权重一起归一化
   keyword_weight: 0.25 # BM25 权重
   retrieval_mode: hybrid # hybrid / vector / keyword
-  rerank_enabled: false # 是否对子块重排
+  rerank_enabled: false # 是否执行重排
   rerank_backend: rule # rule / cross-encoder
-  rerank_top_n: null # 送排数量，null 使用 candidate_top_k
+  rerank_level: child # child / parent；parent 仅支持 cross-encoder，保留 child 默认便于对照
+  child_score_aggregation: mean # mean / max；从 Child 分数计算 Parent 分数，含关闭重排/失败回退
+  rerank_top_n: null # 选取的 Child 数量，null 使用 candidate_top_k；parent 模式去重后送排
   filters: null # 可选 ES 字段过滤字典
 
 reranker:

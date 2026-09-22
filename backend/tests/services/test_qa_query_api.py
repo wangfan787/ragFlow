@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 from langchain_core.documents import Document
 
@@ -98,7 +99,8 @@ def test_query_requires_auth() -> None:
     assert response.json()["code"] == "UNAUTHORIZED"
 
 
-def test_query_end_to_end_with_fakes(monkeypatch) -> None:
+@pytest.mark.parametrize("level,aggregation", [("child", "mean"), ("child", "max"), ("parent", "mean")])
+def test_query_end_to_end_with_fakes(monkeypatch, level, aggregation) -> None:
     router = _install_fakes(monkeypatch)
     client, token = _client_with_token()
 
@@ -106,7 +108,11 @@ def test_query_end_to_end_with_fakes(monkeypatch) -> None:
         "/qa/query",
         json={
             "question": "什么是父子分块？",
-            "retrieval_config": {"retrieval_mode": "vector", "top_k": 3},
+            "retrieval_config": {
+                "retrieval_mode": "vector", "top_k": 3,
+                "rerank_enabled": True, "rerank_backend": "cross-encoder",
+                "rerank_level": level, "child_score_aggregation": aggregation,
+            },
             "qa_config": {"evidence_mode": "child_only"},
         },
         headers={"Authorization": f"Bearer {token}"},
@@ -125,6 +131,8 @@ def test_query_end_to_end_with_fakes(monkeypatch) -> None:
     received = router.received_configs[0]
     assert received.retrieval_mode == "vector"
     assert received.top_k == 3
+    assert received.rerank_level == level
+    assert received.child_score_aggregation == aggregation
     assert data["trace"]["config"]["qa_config"]["evidence_mode"] == "child_only"
     assert data["trace"]["config"]["model"] == "fake-qa-model"
     assert data["trace"]["config"]["index_name"]
@@ -135,13 +143,18 @@ def test_query_end_to_end_with_fakes(monkeypatch) -> None:
     assert {"retrieval", "window", "generation", "citation", "total"} <= set(timings)
 
 
-def test_query_rejects_unknown_retrieval_config_field(monkeypatch) -> None:
+@pytest.mark.parametrize("overrides", [
+    {"unknown_field": 1}, {"rerank_level": "document"},
+    {"child_score_aggregation": "sum"},
+    {"rerank_enabled": True, "rerank_level": "parent", "rerank_backend": "rule"},
+])
+def test_query_rejects_unknown_retrieval_config_field(monkeypatch, overrides) -> None:
     _install_fakes(monkeypatch)
     client, token = _client_with_token()
 
     response = client.post(
         "/qa/query",
-        json={"question": "问题", "retrieval_config": {"unknown_field": 1}},
+        json={"question": "问题", "retrieval_config": overrides},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 422

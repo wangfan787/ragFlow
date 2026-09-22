@@ -15,17 +15,21 @@ class RetrievalConfig(RequestConfig):
     keyword_weight: float = Field(ge=0)
     rerank_enabled: bool
     rerank_backend: Literal["rule", "cross-encoder"]
+    rerank_level: Literal["child", "parent"]
+    child_score_aggregation: Literal["mean", "max"]
     filters: dict[str, Any] | None
     retrieval_mode: Literal["vector", "keyword", "hybrid"]
     rerank_top_n: int | None = Field(ge=1)
 
-    @field_validator("retrieval_mode", "rerank_backend", mode="before")
+    @field_validator("retrieval_mode", "rerank_backend", "rerank_level", "child_score_aggregation", mode="before")
     @classmethod
     def normalize_name(cls, value):
         return value.strip().lower() if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def validate_relationships(self):
+        if self.rerank_enabled and self.rerank_level == "parent" and self.rerank_backend != "cross-encoder":
+            raise ValueError("parent reranking requires rerank_backend=cross-encoder")
         total = self.vector_weight + self.keyword_weight
         if total <= 0:
             raise ValueError("sum of weights must be > 0")

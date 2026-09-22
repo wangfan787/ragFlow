@@ -48,10 +48,14 @@ class HybridRouter:
     def _expand_parent_context(
         self,
         eligible_rows: list[dict],
+        aggregation: str = "mean",
     ) -> tuple[list[dict], dict]:
-        """Aggregate hit Children by Parent using RAGFlow's mean semantics."""
+        """按 Parent 聚合命中子块，并保留窗口和引用需要的来源信息。"""
         if not eligible_rows:
-            return eligible_rows, {"expanded": 0, "deduped": 0, "parent_lookup_failed": 0}
+            return eligible_rows, {
+                "expanded": 0, "deduped": 0, "parent_lookup_failed": 0,
+                "family_score": aggregation,
+            }
 
         # Parent records are context-only. Drop any legacy Parent candidate
         # defensively even if a custom store ignored the mandatory filter.
@@ -85,8 +89,9 @@ class HybridRouter:
             )
             primary = dict(members[0])
 
-            def mean(field: str) -> float:
-                return sum(float(row.get(field, 0.0) or 0.0) for row in members) / len(members)
+            def aggregate(field: str) -> float:
+                scores = [float(row.get(field, 0.0) or 0.0) for row in members]
+                return max(scores) if aggregation == "max" else sum(scores) / len(scores)
 
             matched_children = []
             for row in members:
@@ -106,15 +111,15 @@ class HybridRouter:
                 if row.get("asset_id") is not None:  # image 命中子块透传资产引用
                     entry["asset_id"] = str(row["asset_id"])
                 matched_children.append(entry)
-            family_score = mean("score")
+            family_score = aggregate("score")
             result = {
                 **primary,
                 "score": family_score,
-                "vector_score": mean("vector_score"),
-                "keyword_score": mean("keyword_score"),
-                "fused_score": mean("fused_score"),
+                "vector_score": aggregate("vector_score"),
+                "keyword_score": aggregate("keyword_score"),
+                "fused_score": aggregate("fused_score"),
                 "rerank_score": (
-                    mean("rerank_score")
+                    aggregate("rerank_score")
                     if any(row.get("rerank_score") is not None for row in members)
                     else None
                 ),
@@ -153,7 +158,7 @@ class HybridRouter:
                 )
                 expanded_count += 1
             else:
-                # The family mean still uses every hit, but only the primary
+                # The family score still uses every hit, but only the primary
                 # Child text is available to the prompt when Parent lookup fails.
                 result["matched_children"] = [matched_children[0]]
             expanded_rows.append(result)
@@ -170,7 +175,7 @@ class HybridRouter:
             "deduped": len(children) - len(expanded_rows),
             "parent_lookup_failed": failed_lookups,
             "legacy_parent_candidates_dropped": len(eligible_rows) - len(children),
-            "family_score": "mean",
+            "family_score": aggregation,
         }
         return expanded_rows, trace
 
@@ -231,22 +236,32 @@ class HybridRouter:
             keyword_weight=keyword_weight,
         )
 
-        # ---- 重排漏斗：召回池(candidate_top_k) -> 送排池(rerank_top_n) -> top_k ----
-        # rerank_top_n 未显式配置时等于整个融合池，保持旧行为（重排全部候选）。
+        # 两种粒度共用同一批 Child 候选；Parent 去重不扩大召回池。
         rerank_top_n = (
             config.rerank_top_n
             if config.rerank_top_n is not None
             else config.candidate_top_k
         )
         rerank_pool = fused_rows[:rerank_top_n]
+        parent_rerank = config.rerank_enabled and config.rerank_level == "parent"
+        rerank_inputs = rerank_pool
+        expand_trace = None
+        if parent_rerank:
+            # 聚合仅准备正文与来源；成功后的最终分数由 Parent CE 覆盖。
+            # 此处固定 mean，避免 child_score_aggregation 改变 Parent 模型输入顺序。
+            rerank_inputs, expand_trace = self._expand_parent_context(rerank_pool)
 
         ranked_rows = fused_rows
         fallback_reason: str | None = None
         rerank_model: str | None = None
-        if config.rerank_enabled and rerank_pool:
+        rerank_succeeded = False
+        rerank_sent_count = 0
+        if config.rerank_enabled and rerank_inputs:
             try:
                 reranker = self._reranker_for_backend(config.rerank_backend)
-                ranked_rows = reranker.rerank(query, rerank_pool)
+                rerank_sent_count = len(rerank_inputs)
+                ranked_rows = reranker.rerank(query, rerank_inputs)
+                rerank_succeeded = True
                 # rule 后端没有模型名；cross-encoder 记录实际模型便于复现
                 rerank_model = getattr(reranker, "model_name", None)
             except Exception as exc:  # pragma: no cover
@@ -265,8 +280,14 @@ class HybridRouter:
             if float(item["score"]) >= config.similarity_threshold
         ]
 
-        # small-to-big + 父子去重：子块召回后展开为父块全文，同 family 对贡献子块取均分。
-        eligible_rows, expand_trace = self._expand_parent_context(eligible_rows)
+        if parent_rerank and rerank_succeeded:
+            # 阈值作用于 Parent CE 分数，不能提前用弱 Child 分数淘汰其父块。
+            expand_trace["family_score"] = "cross-encoder"
+        else:
+            # Child 重排、关闭重排和失败回退共用所选聚合方式。
+            eligible_rows, expand_trace = self._expand_parent_context(
+                eligible_rows, config.child_score_aggregation,
+            )
 
         results: list[Document] = []
         for item in eligible_rows[: config.top_k]:
@@ -359,10 +380,22 @@ class HybridRouter:
             "rerank_enabled": config.rerank_enabled,
             "rerank_backend": config.rerank_backend if config.rerank_enabled else None,
             "rerank_model": rerank_model,
+            "rerank_level": config.rerank_level,
+            "rerank_level_effective": config.rerank_level if rerank_succeeded else None,
+            "child_score_aggregation": config.child_score_aggregation,
+            "child_score_aggregation_effective": (
+                None if parent_rerank and rerank_succeeded else config.child_score_aggregation
+            ),
             # 重排漏斗三段：召回池 -> 送排池 -> 最终 top_k，评测据此复现实验
             "candidate_top_k": config.candidate_top_k,
             "rerank_top_n_effective": rerank_top_n,
-            "rerank_sent_count": len(rerank_pool) if config.rerank_enabled else 0,
+            "rerank_child_pool_count": len(rerank_pool) if config.rerank_enabled else 0,
+            "rerank_sent_count": rerank_sent_count,
+            # Parent 缺失时仅有主命中 Child，仍用同一模型评分并明确记录降级数量。
+            "rerank_fallback_child_count": (
+                sum(row.get("chunk_role") == "child" for row in rerank_inputs)
+                if parent_rerank and rerank_succeeded else 0
+            ),
             "final_top_k": config.top_k,
             "fallback_reason": fallback_reason,
             "parent_expansion": expand_trace,

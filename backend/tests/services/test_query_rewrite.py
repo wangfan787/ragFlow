@@ -3,6 +3,11 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+from langchain_core.documents import Document
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
+from backend.src.apps.services.qa_service import QAService
+
 from backend.src.apps.services.query_rewrite import QueryRewriteService
 from backend.src.chunking.token_counter import SimpleTokenCounter
 
@@ -199,3 +204,34 @@ def test_query_rewrite_falls_back_when_model_is_unavailable():
     assert result.fallback_reason == "model_unavailable"
 
 
+class RecordingRouter:
+    def __init__(self):
+        self.questions = []
+
+    def retrieve_detailed(self, question, retrieval_config):
+        self.questions.append(question)
+        return [Document(page_content="独立问题的证据。", metadata={
+            "doc_id": "d", "chunk_id": "p", "score": 0.9,
+        })], {}
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_default_query_rewriter_uses_langchain_invoke(streaming):
+    model = FakeListChatModel(responses=[
+        '{"standalone_query":"RAG 的父子分块如何工作？"}',
+        '先检索子块，再展开父块。[1]',
+    ])
+    service = QAService(model=model)
+    router = RecordingRouter()
+    service.retriever = router
+    kwargs = {"history": [{"role": "user", "content": "我们在讨论 RAG 的父子分块"}]}
+    if streaming:
+        events = list(service.query_stream("它如何工作？", **kwargs))
+        payload = events[-1][1]
+        assert events[-1][0] == "done"
+    else:
+        payload = service.query("它如何工作？", **kwargs)
+    assert router.questions == ["RAG 的父子分块如何工作？"]
+    assert payload["trace"]["query_rewrite"]["applied"] is True
+    assert payload["status"] == "answered"
+    assert payload["citations"][0]["doc_id"] == "d"

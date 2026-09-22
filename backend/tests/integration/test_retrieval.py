@@ -1,4 +1,4 @@
-"""验证重排粒度、父块聚合、失败回退及证据来源的行为。"""
+"""检索与重排：通道门控、候选预算、父块评分、回退和来源传递。"""
 
 from types import SimpleNamespace
 
@@ -6,8 +6,7 @@ from langchain_core.documents import Document
 import pytest
 
 from backend.src.apps.services.qa_service import QAService
-from backend.src.config.retrieval_config import RetrievalConfig, build_retrieval_config
-from backend.src.config.settings import Settings, settings
+from backend.src.config.retrieval_config import RetrievalConfig
 from backend.src.infrastructure.cross_encoder_reranker import CrossEncoderReranker
 from backend.src.retrieval.hybrid_router import HybridRouter
 
@@ -180,22 +179,204 @@ def test_parent_rank_flows_through_qa_window_and_citation():
     assert payload["trace"]["config"]["retrieval_config"]["rerank_level"] == "parent"
 
 
-@pytest.mark.parametrize("overrides", [
-    {"rerank_level": "document"}, {"child_score_aggregation": "sum"},
-    {"rerank_level": True}, {"child_score_aggregation": None},
-    {"rerank_enabled": True, "rerank_level": "parent", "rerank_backend": "rule"},
-])
-def test_invalid_rerank_combinations_are_rejected(overrides):
-    with pytest.raises(ValueError):
-        build_retrieval_config(overrides)
+class FakeEmbedding:
+    model = "fake-v1"
+    dimensions = 2
+
+    def embed_documents(self, texts):
+        return [[1.0, 0.0] for _ in texts]
+
+    def embed_query(self, text):
+        return [1.0, 0.0]
 
 
-def test_rerank_options_follow_yaml_and_request_overrides(monkeypatch):
-    yaml = Settings(local_path=None, overrides={"retrieval": {
-        "rerank_level": "parent", "child_score_aggregation": "max", "rerank_backend": "cross-encoder",
-    }})
-    monkeypatch.setattr(settings, "_data", yaml._data)
-    assert RetrievalConfig().rerank_level == "parent"
-    assert RetrievalConfig().child_score_aggregation == "max"
-    override = build_retrieval_config({"rerank_level": " CHILD ", "child_score_aggregation": "MEAN"})
-    assert override.rerank_level == "child" and override.child_score_aggregation == "mean"
+class FakeStore:
+    def __init__(self, records=None):
+        self.records = records or []
+
+    def query_by_ids(self, ids):
+        return [record for record in self.records if record.metadata["chunk_id"] in ids]
+
+    def vector_search(self, query_vector, top_k, filters=None):
+        return []
+
+    def keyword_search(self, query, top_k, filters=None):
+        return []
+
+
+def _child_row(chunk_id: str, score: float, *, keyword: bool = False, parent_id: str | None = None) -> dict:
+    """构造一个通道召回的 Child 行（与真实 Retriever 的输出结构一致）"""
+    row = {
+        "doc_id": "d", "chunk_id": chunk_id, "content": f"正文-{chunk_id}",
+        "chunk_role": "child", "retrieval_eligible": True,
+        "parent_id": parent_id or f"p-{chunk_id}",
+        "vector_score": score if not keyword else 0.0,
+        "keyword_score": score if keyword else 0.0,
+        "fused_score": score,
+        "score": score,
+    }
+    return row
+
+
+def _gated_router(vector_rows=None, keyword_rows=None) -> tuple[HybridRouter, dict]:
+    """构造可计数的 HybridRouter：记录每个通道被调用的次数"""
+    router = HybridRouter(store=FakeStore(), embedding_model=FakeEmbedding())
+    calls = {"vector": 0, "keyword": 0}
+
+    def vector_retrieve(query, config=None):
+        calls["vector"] += 1
+        return list(vector_rows or [])
+
+    def keyword_retrieve(query, config=None):
+        calls["keyword"] += 1
+        return list(keyword_rows or [])
+
+    router.embedding_retriever.retrieve = vector_retrieve
+    router.keyword_retriever.retrieve = keyword_retrieve
+    return router, calls
+
+
+@pytest.mark.parametrize(
+    "mode,expected",
+    [
+        ("vector", {"vector": 1, "keyword": 0}),
+        ("keyword", {"vector": 0, "keyword": 1}),
+        ("hybrid", {"vector": 1, "keyword": 1}),
+    ],
+)
+def test_retrieval_mode_gates_unselected_channels(mode, expected):
+    # Q24：weight=0 不等于不执行；只有 retrieval_mode 能保证通道不执行
+    router, calls = _gated_router([_child_row("c1", 0.9)], [_child_row("c1", 0.5, keyword=True)])
+    results, trace = router.retrieve_detailed("问题", {"retrieval_mode": mode})
+    assert calls == expected
+    assert trace["retrieval_mode"] == mode
+    assert trace["vector_candidate_count"] == (1 if mode in ("vector", "hybrid") else 0)
+    assert trace["keyword_candidate_count"] == (1 if mode in ("keyword", "hybrid") else 0)
+
+
+def test_vector_weight_one_is_not_vector_only():
+    # 权重全部给向量时，BM25 仍然执行——严格消融必须使用 retrieval_mode
+    router, calls = _gated_router([_child_row("c1", 0.9)], [])
+    router.retrieve_detailed("问题", {"retrieval_mode": "hybrid", "vector_weight": 1.0})
+    assert calls == {"vector": 1, "keyword": 1}
+
+
+def test_single_channel_mode_keeps_raw_channel_score_scale():
+    # 单通道模式下融合分应等于通道原始分（阈值才可跨模式比较）
+    vector_router, _ = _gated_router([_child_row("c1", 0.6)], [])
+    results, trace = vector_router.retrieve_detailed("问题", {"retrieval_mode": "vector"})
+    assert results[0].metadata["score"] == pytest.approx(0.6)
+    assert trace["vector_weight_effective"] == 1.0
+    assert trace["keyword_weight_effective"] == 0.0
+
+    keyword_router, _ = _gated_router([], [_child_row("c1", 0.4, keyword=True)])
+    results, trace = keyword_router.retrieve_detailed("问题", {"retrieval_mode": "keyword"})
+    assert results[0].metadata["score"] == pytest.approx(0.4)
+
+
+class RecordingReranker:
+    backend_name = "recording"
+
+    def __init__(self):
+        self.pool_sizes: list[int] = []
+
+    def rerank(self, query, chunks):
+        self.pool_sizes.append(len(chunks))
+        return list(chunks)
+
+
+def test_rerank_top_n_limits_pool_sent_to_reranker():
+    router, _ = _gated_router([_child_row(f"c{i}", 0.9 - i * 0.1) for i in range(5)], [])
+    reranker = RecordingReranker()
+    router.reranker = reranker
+    results, trace = router.retrieve_detailed(
+        "问题",
+        {
+            "retrieval_mode": "vector",
+            "rerank_enabled": True,
+            "rerank_backend": "rule",
+            "candidate_top_k": 10,
+            "rerank_top_n": 3,
+            "top_k": 2,
+        },
+    )
+    # 5 个融合候选中只有前 rerank_top_n=3 个被送去重排
+    assert reranker.pool_sizes == [3]
+    assert len(results) == 2
+    assert trace["rerank_sent_count"] == 3
+    assert trace["rerank_top_n_effective"] == 3
+    assert trace["candidate_top_k"] == 10
+    assert trace["final_top_k"] == 2
+    assert trace["rerank_backend"] == "rule"
+
+
+def test_rerank_top_n_defaults_to_candidate_budget():
+    router, _ = _gated_router([_child_row(f"c{i}", 0.9 - i * 0.1) for i in range(4)], [])
+    reranker = RecordingReranker()
+    router.reranker = reranker
+    _, trace = router.retrieve_detailed(
+        "问题",
+        {"retrieval_mode": "vector", "rerank_enabled": True, "candidate_top_k": 10, "rerank_top_n": None},
+    )
+    # null 使用 candidate_top_k；本例融合候选数不足预算，全部送排。
+    assert reranker.pool_sizes == [4]
+    assert trace["rerank_top_n_effective"] == 10
+    assert trace["rerank_sent_count"] == 4
+
+
+def test_missing_parent_exposes_only_prompt_available_child_but_keeps_family_trace():
+    router = HybridRouter(store=FakeStore(), embedding_model=FakeEmbedding())
+    rows, _ = router._expand_parent_context(
+        [
+            {"chunk_id": "c1", "doc_id": "d", "content": "first", "chunk_role": "child",
+             "retrieval_eligible": True, "parent_id": "missing", "score": 0.8,
+             "fused_score": 0.8, "vector_score": 0.8, "keyword_score": 0.0},
+            {"chunk_id": "c2", "doc_id": "d", "content": "second", "chunk_role": "child",
+             "retrieval_eligible": True, "parent_id": "missing", "score": 0.6,
+             "fused_score": 0.6, "vector_score": 0.6, "keyword_score": 0.0},
+        ]
+    )
+    assert [item["chunk_id"] for item in rows[0]["matched_children"]] == ["c1"]
+    assert [item["chunk_id"] for item in rows[0]["family_contributors"]] == ["c1", "c2"]
+
+
+def _chunk(chunk_id: str, content: str, fused_score: float = 0.5) -> dict:
+    return {
+        "doc_id": f"doc-{chunk_id}",
+        "chunk_id": chunk_id,
+        "content": content,
+        "fused_score": fused_score,
+        "score": fused_score,
+        "keyword_score": 0.0,
+        "vector_score": fused_score,
+    }
+
+
+class FakePredictor:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def predict(self, inputs, **kwargs):
+        self.calls.append((inputs, kwargs))
+        return [0.1, 0.9]
+
+
+def test_cross_encoder_reranker_scores_raw_query_document_pairs() -> None:
+    predictor = FakePredictor()
+    reranker = CrossEncoderReranker(predictor=predictor, model_name="fake-zh-model")
+    rows = reranker.rerank(
+        "退款期限",
+        [
+            {**_chunk("a", "无关正文"), "doc_name": "甲", "section_path": ["规则"]},
+            {**_chunk("b", "退款期限是七天"), "doc_name": "乙", "section_path": ["售后"]},
+        ],
+    )
+
+    assert [row["chunk_id"] for row in rows] == ["b", "a"]
+    pairs, kwargs = predictor.calls[0]
+    assert pairs == [
+        ("退款期限", "甲\n规则\n无关正文"),
+        ("退款期限", "乙\n售后\n退款期限是七天"),
+    ]
+    assert kwargs["batch_size"] == 16
+    assert rows[0]["rerank_score"] == pytest.approx(0.9)

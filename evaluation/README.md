@@ -93,4 +93,7 @@ python -m pytest evaluation/tests -q
 python -m pytest backend/tests evaluation/tests -q
 ```
 
+`tests/conftest.py` 提供共享的小型合成 CRUD 数据；`test_t2retrieval.py` 保留 T2 分块映射、指标和缓存完整性/断点恢复验证。
+这些是评测工具的回归测试；真实模型实验的 run、score、report 是本地产物，不进入常规 pytest，也不提交 Git。
+
 详细范围、E0–E3 阶段与真实 run 记录见 [`docs/plan/评测.md`](../docs/plan/评测.md)；面试口径见 [`docs/interview/评测与调参口径.md`](../docs/interview/评测与调参口径.md)。

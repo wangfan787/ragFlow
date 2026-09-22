@@ -99,8 +99,7 @@ def test_query_requires_auth() -> None:
     assert response.json()["code"] == "UNAUTHORIZED"
 
 
-@pytest.mark.parametrize("level,aggregation", [("child", "mean"), ("child", "max"), ("parent", "mean")])
-def test_query_end_to_end_with_fakes(monkeypatch, level, aggregation) -> None:
+def test_query_end_to_end_with_fakes(monkeypatch) -> None:
     router = _install_fakes(monkeypatch)
     client, token = _client_with_token()
 
@@ -111,9 +110,9 @@ def test_query_end_to_end_with_fakes(monkeypatch, level, aggregation) -> None:
             "retrieval_config": {
                 "retrieval_mode": "vector", "top_k": 3,
                 "rerank_enabled": True, "rerank_backend": "cross-encoder",
-                "rerank_level": level, "child_score_aggregation": aggregation,
+                "rerank_level": "parent", "child_score_aggregation": "max",
             },
-            "qa_config": {"evidence_mode": "child_only"},
+            "qa_config": {"evidence_mode": "child_only", "context_top_k": 2},
         },
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -131,24 +130,27 @@ def test_query_end_to_end_with_fakes(monkeypatch, level, aggregation) -> None:
     received = router.received_configs[0]
     assert received.retrieval_mode == "vector"
     assert received.top_k == 3
-    assert received.rerank_level == level
-    assert received.child_score_aggregation == aggregation
+    assert received.rerank_level == "parent"
+    assert received.child_score_aggregation == "max"
     assert data["trace"]["config"]["qa_config"]["evidence_mode"] == "child_only"
+    assert data["trace"]["config"]["qa_config"]["context_top_k"] == 2
     assert data["trace"]["config"]["model"] == "fake-qa-model"
     assert data["trace"]["config"]["index_name"]
 
     # usage 记录供应商真实数字；分阶段耗时齐全
     assert data["trace"]["usage"]["total_tokens"] == 10
     timings = data["trace"]["timings_ms"]
-    assert {"retrieval", "window", "generation", "citation", "total"} <= set(timings)
+    for stage in ("retrieval", "window", "generation", "citation", "total"):
+        assert timings[stage] >= 0.0
+    assert timings["total"] >= timings["retrieval"] + timings["window"] + timings["generation"]
+    assert data["trace"]["config"]["retrieval_config"]["rerank_level"] == "parent"
 
 
 @pytest.mark.parametrize("overrides", [
-    {"unknown_field": 1}, {"rerank_level": "document"},
-    {"child_score_aggregation": "sum"},
+    {"unknown_field": 1},
     {"rerank_enabled": True, "rerank_level": "parent", "rerank_backend": "rule"},
 ])
-def test_query_rejects_unknown_retrieval_config_field(monkeypatch, overrides) -> None:
+def test_query_maps_invalid_retrieval_config_to_422(monkeypatch, overrides) -> None:
     _install_fakes(monkeypatch)
     client, token = _client_with_token()
 

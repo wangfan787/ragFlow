@@ -1,59 +1,18 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 
-from evaluation.build_dataset import BuildConfig, TASKS, build_dataset
+from evaluation.build_dataset import BuildConfig, build_dataset
 from evaluation.report import render_report
 from evaluation.schemas import read_jsonl, write_jsonl
 from evaluation.score_run import score_run
 from evaluation.validate_dataset import validate_dataset
 
 
-def _source_fixture(root: Path) -> Path:
-    source = root / "CRUD_RAG"
-    split_dir = source / "data" / "crud_split"
-    distractor_dir = source / "data" / "80000_docs"
-    split_dir.mkdir(parents=True)
-    distractor_dir.mkdir(parents=True)
-    rows = {}
-    for task_index, task in enumerate(TASKS, start=1):
-        doc_count = task_index
-        task_rows = []
-        for row_index in range(3):
-            row = {
-                "ID": f"event-{task_index}-{row_index}",
-                "event": f"事件 {task_index}-{row_index}",
-                "questions": f"任务 {task_index} 问题 {row_index}",
-                "answers": f"任务 {task_index} 答案 {row_index}",
-            }
-            for doc_index in range(1, doc_count + 1):
-                row[f"news{doc_index}"] = f"正例 {task_index}-{row_index}-{doc_index} 的独立事实"
-            task_rows.append(row)
-        rows[task] = task_rows
-    (split_dir / "split_merged.json").write_text(
-        json.dumps(rows, ensure_ascii=False), encoding="utf-8"
-    )
-    distractors = "\n".join(f"干扰新闻 {index} 包含任务主题但事实不同" for index in range(60)) + "\n"
-    (distractor_dir / "part-1").write_text(distractors, encoding="utf-8")
-    return source
-
-
-def _build_fixture(tmp_path: Path) -> Path:
-    source = _source_fixture(tmp_path)
-    output = tmp_path / "mini"
-    build_dataset(
-        source,
-        output,
-        BuildConfig(seed=42, per_task=2, dev_per_task=1, corpus_size=20, hard_negative_count=3),
-    )
-    return output
-
-
-def test_builder_is_deterministic_and_dataset_is_valid(tmp_path: Path) -> None:
-    source = _source_fixture(tmp_path)
+def test_builder_is_deterministic_and_dataset_is_valid(tmp_path: Path, source_dataset) -> None:
+    source = source_dataset
     first = tmp_path / "first"
     second = tmp_path / "second"
     config = BuildConfig(seed=42, per_task=2, dev_per_task=1, corpus_size=20, hard_negative_count=3)
@@ -61,8 +20,6 @@ def test_builder_is_deterministic_and_dataset_is_valid(tmp_path: Path) -> None:
     second_manifest = build_dataset(source, second, config)
 
     assert first_manifest == second_manifest
-    for name in first_manifest["files"]:
-        assert first_manifest["files"][name] == second_manifest["files"][name]
     result = validate_dataset(first)
     assert result["valid"] is True
     assert result["corpus"] == 20
@@ -73,8 +30,8 @@ def test_builder_is_deterministic_and_dataset_is_valid(tmp_path: Path) -> None:
     assert len({row["event_id"] for row in queries}) == 6
 
 
-def test_perfect_run_scores_one_and_renders_report(tmp_path: Path) -> None:
-    dataset = _build_fixture(tmp_path)
+def test_perfect_run_scores_one_and_renders_report(tmp_path: Path, mini_dataset) -> None:
+    dataset = mini_dataset
     queries = [*read_jsonl(dataset / "queries.dev.jsonl"), *read_jsonl(dataset / "queries.test.jsonl")]
     relevant = {}
     for row in read_jsonl(dataset / "qrels.jsonl"):
@@ -116,8 +73,8 @@ def test_perfect_run_scores_one_and_renders_report(tmp_path: Path) -> None:
     assert "Faithfulness" in report
 
 
-def test_scorer_rejects_incomplete_run(tmp_path: Path) -> None:
-    dataset = _build_fixture(tmp_path)
+def test_scorer_rejects_incomplete_run(tmp_path: Path, mini_dataset) -> None:
+    dataset = mini_dataset
     query = next(read_jsonl(dataset / "queries.dev.jsonl"))
     run_path = tmp_path / "incomplete.jsonl"
     write_jsonl(

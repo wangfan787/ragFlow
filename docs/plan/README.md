@@ -43,7 +43,7 @@
 
 - `backend/src` 约 5,000 行 Python，核心链路包含解析、父子分块、Embedding、ES、向量/BM25 混合检索、可选 Rerank、父块恢复、证据窗口、回答和引用。
 - 手写 Markdown/PDF/HTML/TXT 解析器已迁移为 `UnstructuredParser` 统一实现，并修复 PDF/Numba 在只读环境中的冷启动问题。2026-09-21 在 Conda `agent` 环境重跑后端与评测测试，全量 `164 passed`。
-- 2026-09-18 完成 §4.2 四项生产评测前置改造：`retrieval_mode` 通道门控、`rerank_top_n` 漏斗、请求级 `QAConfig`、请求级结构化 Trace（config/timings_ms/usage）。默认行为不变（默认 hybrid、Rerank 默认关闭、窗口默认值保持）。Conda `agent` 环境全量 102 个测试通过（含新增 20 个验收测试，`backend/tests/services/test_retrieval_mode_qa_config.py`）。
+- 2026-09-18 完成 §4.2 四项生产评测前置改造：`retrieval_mode` 通道门控、`rerank_top_n` 漏斗、请求级 `QAConfig`、请求级结构化 Trace（config/timings_ms/usage）。默认行为不变（默认 hybrid、Rerank 默认关闭、窗口默认值保持）。Conda `agent` 环境全量 102 个测试通过（含新增 20 个验收测试，现已按功能归并至 `backend/tests/integration/test_retrieval.py`、`backend/tests/services/test_qa_service.py` 与 `backend/tests/foundation/test_request_config.py`）。
 - PDF 当前使用 Unstructured `fast` 策略，不含 OCR 和版面模型；Markdown 表格会被规范化为纯文本，列表内围栏代码可能被拍平。
 - `QueryRewriteService` 已接入 `QAService` 与同步/SSE API：请求可携带 `history`，服务按完整 user+assistant 轮次做最近窗口和 token 裁剪，并把改写后的独立问题同时用于检索和回答；无历史时可按请求开启口语规范化，Step-back 作为默认关闭的实验开关执行双路检索和去重合并。当前仍没有 Conversation/Message/session_id 持久化、歧义澄清协议和查询侧关键词追加。
 - `RetrievalMetadataGenerator`（LLM 生成 important_kwd/question_kwd/title_tks 等检索元数据）有独立实现，但 `EmbeddingIndexer` 从未调用它，相关字段目前既未生成也未参与 BM25 检索。**2026-09-19 决定暂缓接线**：RAGFlow 同类开关（`auto_keywords`/`auto_questions`）默认关闭，逐子块 LLM 成本与收益未经评测证明，当前 Golden Set 也未呈现 BM25 召回缺口；接入方案保留在 `docs/compare.md` §4.1-4.3 备查，失败证据触发后再启动（文件头部已标注用途与 TODO）。

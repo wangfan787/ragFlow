@@ -1,4 +1,4 @@
-"""P0-B：生产 Runner 契约（索引 manifest / run 录制 / 参数扫描锁定）。
+"""生产 Runner 契约（索引 manifest / run 录制 / 参数扫描锁定）。
 
 - index_dataset 只调用生产 IngestionPipeline，CRUD doc_id 原样保留；
 - run_retrieval / run_qa 产出符合冻结 schema 的 JSONL，可被 score_run 评分；
@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import re
 from pathlib import Path
@@ -17,7 +16,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from evaluation.build_dataset import BuildConfig, TASKS, build_dataset
 from evaluation.schemas import read_jsonl
 from evaluation.score_run import score_run
 
@@ -138,43 +136,8 @@ class FakeChat:
 
 
 # ---------------------------------------------------------------------------
-# 数据集 fixture（与 test_evaluation 相同的合成上游）
+# 使用 conftest.py 的共享合成数据；这里仅构造生产调用链
 # ---------------------------------------------------------------------------
-
-def _source_fixture(root: Path) -> Path:
-    source = root / "CRUD_RAG"
-    split_dir = source / "data" / "crud_split"
-    distractor_dir = source / "data" / "80000_docs"
-    split_dir.mkdir(parents=True)
-    distractor_dir.mkdir(parents=True)
-    rows = {}
-    for task_index, task in enumerate(TASKS, start=1):
-        task_rows = []
-        for row_index in range(3):
-            row = {
-                "ID": f"event-{task_index}-{row_index}",
-                "event": f"事件 {task_index}-{row_index}",
-                "questions": f"任务 {task_index} 问题 {row_index}",
-                "answers": f"任务 {task_index} 答案 {row_index}",
-            }
-            for doc_index in range(1, task_index + 1):
-                row[f"news{doc_index}"] = f"正例 {task_index}-{row_index}-{doc_index} 的独立事实"
-            task_rows.append(row)
-        rows[task] = task_rows
-    (split_dir / "split_merged.json").write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
-    distractors = "\n".join(f"干扰新闻 {index} 包含任务主题但事实不同" for index in range(60)) + "\n"
-    (distractor_dir / "part-1").write_text(distractors, encoding="utf-8")
-    return source
-
-
-def _build_dataset(tmp_path: Path) -> Path:
-    output = tmp_path / "mini"
-    build_dataset(
-        _source_fixture(tmp_path), output,
-        BuildConfig(seed=42, per_task=2, dev_per_task=1, corpus_size=20, hard_negative_count=3),
-    )
-    return output
-
 
 def _build_stack(index_name: str = "eval-fixture"):
     from evaluation.runner.production_adapter import build_stack
@@ -211,12 +174,12 @@ def isolated_eval_dirs(tmp_path, monkeypatch):
 # index_dataset
 # ---------------------------------------------------------------------------
 
-def test_index_dataset_preserves_crud_doc_ids_and_writes_manifest(tmp_path: Path, monkeypatch) -> None:
+def test_index_dataset_preserves_crud_doc_ids_and_writes_manifest(tmp_path: Path, monkeypatch, mini_dataset) -> None:
     from evaluation.runner import index_dataset as index_module
     from evaluation.runner.index_dataset import index_dataset, write_manifest
 
     monkeypatch.setattr(index_module, "git_commit", lambda: "a" * 40)
-    dataset = _build_dataset(tmp_path)
+    dataset = mini_dataset
     stack = _build_stack()
     manifest = index_dataset(dataset, stack)
 
@@ -234,10 +197,10 @@ def test_index_dataset_preserves_crud_doc_ids_and_writes_manifest(tmp_path: Path
     assert indexed_doc_ids == corpus_ids  # CRUD 原始 doc_id 必须原样保留
 
 
-def test_index_dataset_records_per_document_failures(tmp_path: Path) -> None:
+def test_index_dataset_records_per_document_failures(tmp_path: Path, mini_dataset) -> None:
     from evaluation.runner.index_dataset import index_dataset
 
-    dataset = _build_dataset(tmp_path)
+    dataset = mini_dataset
     stack = _build_stack()
 
     original_run = stack.pipeline.run
@@ -259,11 +222,11 @@ def test_index_dataset_records_per_document_failures(tmp_path: Path) -> None:
 # run_retrieval / run_qa
 # ---------------------------------------------------------------------------
 
-def test_run_retrieval_records_valid_runs_for_all_variants(tmp_path: Path, isolated_eval_dirs) -> None:
+def test_run_retrieval_records_valid_runs_for_all_variants(tmp_path: Path, isolated_eval_dirs, mini_dataset) -> None:
     from evaluation.runner.index_dataset import index_dataset
     from evaluation.runner.run_retrieval import DEFAULT_RETRIEVAL_VARIANTS, run_retrieval
 
-    dataset = _build_dataset(tmp_path)
+    dataset = mini_dataset
     stack = _build_stack()
     index_dataset(dataset, stack)
 
@@ -300,11 +263,11 @@ def test_run_retrieval_dedupes_documents_in_run_rows(tmp_path: Path) -> None:
     assert [item["rank"] for item in row["retrieved"]] == [1, 2]
 
 
-def test_run_qa_records_answer_citations_and_evidence(tmp_path: Path, isolated_eval_dirs) -> None:
+def test_run_qa_records_answer_citations_and_evidence(tmp_path: Path, isolated_eval_dirs, mini_dataset) -> None:
     from evaluation.runner.index_dataset import index_dataset
     from evaluation.runner.run_qa import run_qa
 
-    dataset = _build_dataset(tmp_path)
+    dataset = mini_dataset
     stack = _build_stack()
     index_dataset(dataset, stack)
 
@@ -326,10 +289,10 @@ def test_run_qa_records_answer_citations_and_evidence(tmp_path: Path, isolated_e
             assert row["meta"]["qa_config"]["evidence_mode"]
 
 
-def test_run_qa_maps_no_evidence_errors_per_query(tmp_path: Path, isolated_eval_dirs) -> None:
+def test_run_qa_maps_no_evidence_errors_per_query(tmp_path: Path, isolated_eval_dirs, mini_dataset) -> None:
     from evaluation.runner.run_qa import run_qa_variant
 
-    dataset = _build_dataset(tmp_path)
+    dataset = mini_dataset
     stack = _build_stack()
     # 过滤到不存在的 doc：检索必然为空 → NO_RETRIEVED_CHUNKS → no_evidence
     spec = {"retrieval": {"filters": {"doc_id": "crud_nonexistent"}}, "qa": {}}
@@ -349,7 +312,7 @@ def test_run_qa_maps_no_evidence_errors_per_query(tmp_path: Path, isolated_eval_
 # sweep 与锁定
 # ---------------------------------------------------------------------------
 
-def test_sweep_locks_config_and_applies_rerank_rule(tmp_path: Path, isolated_eval_dirs) -> None:
+def test_sweep_locks_config_and_applies_rerank_rule(tmp_path: Path, isolated_eval_dirs, mini_dataset) -> None:
     from evaluation.runner.index_dataset import index_dataset
     from evaluation.runner.sweep import (
         RERANK_MIN_RECALL_GAIN,
@@ -358,7 +321,7 @@ def test_sweep_locks_config_and_applies_rerank_rule(tmp_path: Path, isolated_eva
         sweep_retrieval,
     )
 
-    dataset = _build_dataset(tmp_path)
+    dataset = mini_dataset
     stack = _build_stack()
     index_dataset(dataset, stack)
 

@@ -20,19 +20,20 @@
 
 | 字段 | 含义 |
 |---|---|
-| `block_type` | heading / paragraph / code / table / list |
+| `block_type` | heading / paragraph / code / table / list / frontmatter；Markdown 图片增强阶段补 image |
 | `section_path` | 标题层级路径（面包屑） |
 | `source_span` | 回原文的行列/字符坐标 |
-| `accuracy` | 坐标可信度：exact / line_only / unavailable（宁可降级不伪造） |
+| `source_span.accuracy` | 坐标可信度：exact / line_only / unavailable（宁可降级不伪造） |
 | `order` | 文档内顺序号 |
-| `normalization_segments` | （仅 HTML）清洗后文字 ↔ 原文的映射表 |
-| `page_no` / `bbox` | PDF 页码 / 版面框（预留） |
+| `page_no` / `bbox` | PDF 页码 / 版面框（bbox 当前为 None） |
 
 **特点**：
 - 格式差异在 parse 层终结——下游只认 block，不认格式；
 - **切分看结构不看大小**：识别出的 table、code 保留为完整 block
   （真实例子：1488 字符的无空行纯文本 = 1 个 block）；
 - Markdown 受保护结构直接保存原文和精确坐标；其余规范化文本回定位，坐标不可靠时降级精度。
+- 当前不输出 `normalization_segments`；HTML 普通文本回定位成功也只标 `line_only`，不能据字符数值承诺逐字高亮。
+- 文件来源的 Markdown 还会经过 `ImagePipeline`，补入本地图片资产与 VLM 描述；独立图片、HTML/PDF 图片不在当前支持范围。
 
 ## 二、Chunk 层：对 block 流"合小 + 切大"
 

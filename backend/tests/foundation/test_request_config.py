@@ -13,7 +13,8 @@ from backend.src.config.settings import settings
     {"rerank_enabled": "false"},
     {"top_k": 2.5},
     {"top_k": True},
-    {"vector_weight": float("nan")},
+    {"similarity_threshold": float("nan")},
+    {"vector_weight": 0.75},  # RRF 已删除旧权重参数，不静默忽略。
     {"rerank_top_n": ""},
 ])
 def test_invalid_retrieval_config_is_rejected(overrides):

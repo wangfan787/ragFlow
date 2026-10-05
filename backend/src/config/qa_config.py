@@ -8,6 +8,7 @@ from .request_config import RequestConfig, build_config
 
 class QAConfig(RequestConfig):
     section: ClassVar[str] = "qa"
+    answer_mode: Literal["knowledge", "conversation"]
     context_top_k: int = Field(gt=0)
     evidence_mode: Literal["child_only", "window", "full_parent"]
     evidence_window_tokens: int = Field(gt=0)

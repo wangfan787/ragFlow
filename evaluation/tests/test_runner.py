@@ -329,7 +329,7 @@ def test_sweep_locks_config_and_applies_rerank_rule(tmp_path: Path, isolated_eva
     # 基线四个变体齐全；每个轴的候选数量受轴定义约束（无笛卡尔积）
     assert set(sweep["baselines"]) == {"vector", "keyword", "hybrid", "hybrid_rerank"}
     total_variants = sum(len(entry["variants"]) for entry in sweep["selection"])
-    assert total_variants == 4 + 3 + 4 + 6 + 3
+    assert total_variants == 4 + 3 + 4 + 3  # RRF 不再扫描线性融合权重。
 
     # rerank 决策规则可独立验证
     decision = decide_rerank({

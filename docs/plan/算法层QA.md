@@ -1,6 +1,6 @@
 # 算法层 QA 与可执行工作计划
 
-更新日期：2026-09-22。
+更新日期：2026-09-28。
 
 本文专门解释 `docs/plan/README.md` 算法层里容易产生歧义的术语、优先级和验收口径，并把讨论结果沉淀成后续可执行清单。
 
@@ -11,19 +11,20 @@
 | 问题 | 结论 |
 |---|---|
 | 统一解析引擎是不是已经构造完毕？ | 是。Markdown、PDF、HTML、TXT 已统一到 `UnstructuredParser`，当前工作区回归通过；干净环境安装、服务上传联调和冷/热启动耗时属于后续部署验收，不再算算法 P0。 |
-| 以前不是已经通过测试了吗？ | 是。2026-09-21 在 Conda `agent` 环境重跑 `backend/tests + evaluation/tests`，结果为 `164 passed`；它能证明当前代码契约，但不能替代真实 ES、真实模型和部署联调。 |
+| 以前不是已经通过测试了吗？ | 是。2026-09-23 在 Conda `agent` 环境重跑 `backend/tests + evaluation/tests`，结果为 `195 passed`（2026-09-21 历史记录为 164）；它能证明受测代码契约，但不能替代真实 ES、真实模型和部署联调。 |
 | 图片为什么要分块？ | 不切图片像素。图片保存为资产；`image block` 是图片在统一 Document 契约中的逻辑块。通常一图一块，只有过长的 VLM 文本描述才按文本切分。 |
 | VLM 描述是什么？ | 核心确实是把图片交给视觉模型，让它输出可检索的文字；但还需要资产保存、提示词约束、结构化输出、失败处理、索引和引用回传。 |
 | 来源坐标为什么是 P0？ | “精度诚实 + 最小回归集”曾是 P0，目前已实现并通过回归；扩大到 20–30 篇并生成比例报告属于 P1。 |
 | 父子分块的 profile 是什么？ | 是一组命名的分块参数预设，不是用户画像，也不是模型。当前只有一套默认配置就够了，先保留 hash 和版本，出现明确失败再增加 profile。 |
 | 三种 Embedding 输入消融是不是三个模型？ | 不是。固定当前同一个 Embedding 模型，只比较“正文 / 标题+正文 / 章节路径+正文”三种输入模板。个人项目可因成本暂缓，不需要购买或配置多个模型。 |
 | 融合排序和 Rerank 为什么影响效果？ | 融合决定向量召回与 BM25 召回如何合并；Rerank 对合并后的少量候选做更精细的二次排序。前者决定候选池，后者主要改善头部顺序。 |
-| RRF 和 Rerank 都必须 P0 实现吗？ | 不必。P0 应先测当前 Weighted Sum 和已有 Rerank 的真实基线；Weighted RRF 是低成本候选方案，只有当前融合确有问题时再升为实现任务。 |
+| 当前使用哪种融合？ | 等权 RRF（k=60），固定缩放到 0～1；旧 Weighted Sum 已删除。历史调参收益仍属于旧实现，RRF 质量待重新评测。 |
 | `vector_weight=1` 是不是 Vector-only？ | 不是；不过这个缺口已修复。现在使用 `retrieval_mode=vector`，测试已证明未选中的 BM25 通道调用次数为 0。 |
 | 为什么 Evidence Window 还要改配置接口？ | 这个缺口已修复。`QAService.query()` 已接受请求级 `QAConfig`，可在同一 Runner 中逐题比较 `child_only/window/full_parent`。 |
-| 为什么总延迟还不够？ | 这个缺口也已修复。QA 已返回请求级分阶段耗时和真实可得的 usage；剩余工作只是由 Runner 原样录制并形成真实 P50/P95、token 与成本基线。 |
-| 为什么 2026-09-22 消融里三种 Rerank 都没有净收益？ | 三个原因叠加：候选池饱和（Dev 30 题里 26 题不开 Rerank 就已 recall@10 满分）；rule 档与首排 keyword 通道信号同源、且 0.1 加成上限小于全部首尾分差（最小 0.108）；CrossEncoder 有真实尾部增益但"整分替换"实现把它转化为头部损失，且 30 题差值置信区间跨零。详见 Q28–Q30。 |
-| CRUD-RAG-mini 还能不能测出 Rerank？ | 能测检索模式级差异（Test 120 题上旧 rerank 实验对 +7.5pt recall@10、CI 不含零），测不了强配置之间 ±5pt 的小差异。补 CI 纪律、扩池子把基线 recall@10 压回工作区间后重测，见 Q30–Q31。 |
+| 为什么总延迟还不够？ | 这个缺口也已修复。QA 已返回请求级分阶段耗时和真实可得的 usage；Runner 已完成历史真实录制与 P50/P95、token 基线；当前配置变化后的性能需要另行实测。 |
+| 为什么 2026-09-22 消融里三种 Rerank 都没有净收益？ | 历史实验表现为头部指标下降、尾部指标上升，未满足默认开启条件。饱和程度、规则信号重叠、CE 整分替换和 Child 聚合都是分析线索，未隔离唯一原因；详见 Q28–Q30。 |
+| CRUD-RAG-mini 还能不能测出 Rerank？ | 历史实验检测到较大差异，但对小差异的把握受样本量、饱和度和逐题方差影响，不能给出统一的 ±5pt 检测边界。见 Q30–Q31。 |
+| 当前支持 Parent 重排和 max 聚合吗？ | 支持。新增请求级 rerank_level 与 child_score_aggregation，默认仍为关闭重排、child、mean；历史 T2 实验与当前生产接口的边界见 Q32。 |
 
 ---
 
@@ -36,7 +37,7 @@
 - Markdown、PDF、HTML、TXT 已统一由 `UnstructuredParser` 承接，`parser_factory.py` 已接入统一实现。
 - PDF 相关重依赖按需加载，并已规避只读环境中的 Numba 缓存初始化问题。
 - 回归覆盖标题、列表、代码块、表格文本、frontmatter、HTML 实体、重复文本回定位、非法 UTF-8 和 PDF 文本提取等关键行为。
-- 2026-09-21 在 Conda `agent` 环境运行 `python -m pytest backend/tests evaluation/tests -q`，结果为 `164 passed`。
+- 2026-09-23 在 Conda `agent` 环境运行 `python -m pytest backend/tests evaluation/tests -q`，结果为 `195 passed`；2026-09-21 的 `164 passed` 保留为历史里程碑。
 
 因此状态应写为：
 
@@ -52,7 +53,7 @@
 2. 按真实启动方式完成一次“上传 → 解析 → 分块 → 入库”，记录失败阶段和错误语义。
 3. 对小、中、大样例记录首次/热启动耗时、block 数和峰值内存，形成 P50/P95 基线。
 
-### Q3：`164 passed` 能证明什么？
+### Q3：回归测试通过能证明什么？
 
 | 证据 | 能证明 | 不能证明 |
 |---|---|---|
@@ -74,13 +75,13 @@
 当前 `parser_factory.py` 只注册了 Markdown、PDF、HTML、TXT，没有 PNG/JPG 等图片类型。因此：
 
 - 文本格式解析主链已经完成并通过当前环境回归；
-- 图片是当前最明显的新能力缺口；
-- README 当前 P0 的实际范围是 **Markdown 中引用的本地图片**；
+- **Markdown 中引用的本地图片**已通过 `ImagePipeline` 接入入库、资产登记、VLM 描述、分块和引用预览；
+- 伴随图片上传通道和真实 VLM 联调仍待完成，不能把内部文件链路可用等同于线上完整上传体验；
 - HTML 远程图片、PDF 内嵌图片、扫描 PDF、独立图片文件应分别定义，不能一句“支持图片”全部覆盖。
 
-个人项目的合理 MVP 是：
+当前已编码并有替身测试的 MVP 是：
 
-> 先支持 Markdown 本地图片 → 保存资产 → VLM 生成描述 → 可检索 → 引用能返回原图。
+> Markdown 本地图片 → 保存资产 → VLM 生成描述 → 可检索 → 引用能返回原图。
 
 HTML 远程图片涉及下载安全和网络稳定，PDF 内嵌图片涉及版面与页内关系，扫描 PDF 又属于 OCR；这些不应偷偷塞进同一个 P0。
 
@@ -88,7 +89,7 @@ HTML 远程图片涉及下载安全和网络稳定，PDF 内嵌图片涉及版�
 
 `image block` 是解析层输出的一种逻辑 Document，地位类似 heading、paragraph、code、table。它不是图片二进制本身，也不是把图片转成 Base64 塞进 Elasticsearch。
 
-一个建议结构是：
+当前成功描述后的关键字段示意如下；失败/跳过时保留占位文本，资产相关字段可能缺失：
 
 ```text
 page_content:
@@ -97,11 +98,11 @@ page_content:
 metadata:
   block_type: image
   asset_id: sha256:...
-  document_id: ...
+  doc_id: ...（入库分块阶段补齐；资产表对应字段为 document_id）
   storage_key: 后端内部受控存储键，不是客户端路径
   mime_type: image/png
   alt_text: 原 Markdown alt
-  caption: 相邻标题或图注
+  caption: 交错定位后按最近标题回填，缺失时使用 alt
   section_path: [检索流程, 混合检索]
   source_span: 图片语法在 Markdown 原文中的位置
   vlm_model: ...
@@ -117,33 +118,32 @@ metadata:
 
 > image block 进入统一的父子块编排；原始图片本身不切像素。
 
-首版规则建议如下：
+当前规则如下：
 
 1. 原图作为独立 asset 保存，不裁切、不向量化二进制。
-2. 一张图片生成一个原子 image block，尽量不与另一张图片合并。
-3. VLM 描述、alt、caption、section path 组成可检索文本。
+2. 一张图片生成一个 image block，不与相邻文本或另一张图片合并。
+3. VLM 结构化描述与 alt 拼成正文；caption、section_path 作为元数据回填，当前不拼入嵌入正文。
 4. 描述在正常 token 上限内时，一图对应一个可检索 Child。
 5. 只有描述异常长、超过硬上限时，才切“描述文字”，不是切图片。
-6. 命中该 Child 后，Citation 返回 `asset_id`；前端通过需要鉴权的后端接口获取原图或短期签名 URL。
+6. 命中该 Child 后，Citation 返回 `asset_id`；客户端通过需要鉴权的 `/assets/preview` 获取原图；当前未实现短期签名 URL。
 
-当前 chunker 只特别保护 code/table，没有把 image 当成原子块；而且 chunk 输出只挑选部分 metadata，`asset_id` 也不会自动透传。因此图片 P0 不只是“调用一次 VLM”，还必须改分块、metadata 透传和授权读取三个边界。
+当前 `BlockMergeStrategy` 已隔离 image，`BlockChunker` 已显式透传 `asset_id` 等图片元数据，检索与 Citation 保留资产引用。与完整 code/table 不同，过长图片描述仍按普通文本预算切分；“原子”指不与相邻块混合，不承诺任意长度的一图只有一个 Child。
 
 ### Q7：VLM 描述是不是把图片发给视觉 LLM，让它用自然语言描述一遍？
 
 本质上是，但生产链路多了约束和治理：
 
 ```text
-发现 Markdown 图片
-→ 后端用当前用户和 document_id/asset_id 查询数据库归属
-→ 查到授权资源记录
-→ 在授权存储边界内校验路径、大小、格式
-→ 计算 SHA256，生成 asset_id 并保存原图
-→ 将图片、alt、图注、章节上下文发送给 VLM
-→ 要求输出 OCR 文字、主体、关键事实、图表趋势和不确定项
-→ 校验输出，生成 image block
+从服务端登记的 Markdown 文件发现本地相对路径图片
+→ 校验引用路径边界、文件类型和大小
+→ 计算 SHA256，生成 asset_id、保存原图，并关联 document_id/owner
+→ 将图片和 alt 发送给 VLM，校验结构化 JSON
+→ 拼成 image block；失败保留资产和 failed 状态，非法引用保留 skipped 占位
+→ 与正文交错排列并回填章节元数据
 → 分块/Embedding/索引
 → 检索命中后返回文字证据与 asset_id
-→ 后端再次鉴权并生成原图预览响应或短期签名 URL
+→ /assets/preview 按 asset_id + document_id + 当前用户 JOIN 鉴权
+→ 校验 storage_key 路径边界并返回原图
 ```
 
 自然语言描述不能只追求“看起来通顺”。检索更需要稳定、事实密集的内容，例如：
@@ -154,30 +154,31 @@ metadata:
 - 表格图片：表头、关键单元格，必要时保留行列结构；
 - 无法辨认的内容：明确输出不确定，不编造。
 
-首版可以让 VLM 返回受约束的 JSON，再由程序拼成 `page_content`。这比完全自由的一段描述更容易回归测试和版本化。
+当前 VLM 已返回受约束的 JSON，再由程序拼成 `page_content`。这比完全自由的一段描述更容易回归测试和版本化。
 
-### Q8：未来接入后端后，图片和其他文件的读取权限怎么判断？
+### Q8：当前图片预览的读取权限怎么判断？
 
-个人项目先做简单实现即可，不需要建设完整 IAM、ACL 引擎或独立 AuthorizationService。核心就是：**读取文件前查一次数据库，确认当前用户拥有该文档或资源。**
+当前图片预览采用简单归属校验：**读取资产文件前查数据库，确认当前用户拥有所关联文档。** 文档列表、源文件、入库和删除端点目前仅要求登录，完整文档归属隔离仍是 P1，不能把图片预览鉴权扩大描述为全站权限隔离。
 
-可以由一条带归属条件的查询完成：
+`AssetRegistry.authorized_asset()` 用一条查询完成：
 
 ```sql
 SELECT a.*
 FROM assets a
-JOIN documents d ON d.id = a.document_id
+JOIN documents d ON d.doc_id = a.document_id
 WHERE a.asset_id = :asset_id
-  AND d.owner_id = :current_user_id;
+  AND a.document_id = :document_id
+  AND json_extract(d.payload, '$.owner_id') = :current_user_id;
 ```
 
-查不到就返回 404 或 403；查到后，后端使用数据库保存的 `storage_key` 读取文件，再交给 parser/VLM。引用预览时复用同一条归属查询。
+预览查不到授权记录时不返回文件；查到后，后端使用数据库保存的 `storage_key` 受控读取。入库 VLM 使用解析管线校验过的本地图片，并不执行这条预览 JOIN；其触发端点的文档 owner 校验仍待补齐。
 
-首版只保留四条底线：
+图片预览接口的约束：
 
 1. 客户端提交 `document_id/asset_id`，不能提交服务器任意本地路径。
 2. 数据库查询必须同时带资源 ID 和当前用户的归属条件，不能先按 ID 查出再忘记鉴权。
 3. `storage_key` 由后端生成并保存；读取前确认规范化路径仍在项目的文件存储目录内，防止 `..` 等路径穿越。
-4. VLM 调用和原图预览都只能使用已经通过上述查询的文件。
+4. 原图预览只返回通过归属查询和存储边界检查的文件；不得把 asset_id 的可猜测性当作权限校验。
 
 SHA256 只是查重标识，不是权限凭证。若将来增加 KnowledgeBase、团队或租户，再把查询条件扩展为成员关系或 tenant 条件即可；当前不提前建设复杂权限系统。
 
@@ -191,7 +192,7 @@ SHA256 只是查重标识，不是权限凭证。若将来增加 KnowledgeBase�
 
 用户看到的检索文本通常不是原文：
 
-- Markdown 去掉了 `#`、反引号、表格分隔线；
+- 普通 Markdown 文本可能去掉标记；当前受保护的代码与表格则保留原文；
 - HTML 去掉了标签、script/style，并解码了实体；
 - PDF 抽取后的阅读顺序可能已经变化；
 - 分块又把多个 block 合并或截成 Child。
@@ -326,18 +327,18 @@ table-heavy:
 
 ```text
 用户 Query
-├─ 向量召回：找“语义相似”的 Child
-└─ BM25 召回：找“关键词、型号、数字精确匹配”的 Child
+├─ 向量召回：语义相似 Child
+└─ BM25 召回：关键词匹配 Child
         ↓
-融合排序 Fusion：把两路结果合成一个候选列表
+Fusion：按 Child 合并去重、等权 RRF 评分
         ↓
-候选池 Candidate Pool：例如前 30 或前 100 个 Child
+关闭重排：融合分过滤 → Parent mean/max 聚合
+Child 重排：取前 N 个 Child → 重排 → 分数过滤 → Parent mean/max 聚合
+Parent 重排：取同样 N 个 Child → 恢复并去重 Parent → CE 重排 → 分数过滤
         ↓
-Rerank：用更贵但更精细的方法重新判断 Query 与每个候选的相关性
+取最终 top_k 个结果（正常为 Parent，父块缺失可回落 Child）
         ↓
-最终 TopK：例如 5 个 Child
-        ↓
-恢复 Parent → 构造 Evidence Window → 回答与引用
+按 context_top_k 选取 → 构造 Evidence → 回答与引用
 ```
 
 #### 向量召回
@@ -356,16 +357,16 @@ Query 和 Child 各自编码成向量，通过距离找语义接近内容。擅�
 
 召回阶段通常分别编码 Query 和文档，便宜但交互较弱。Cross Encoder Reranker 把 `Query + 候选文本` 成对输入模型，能更细地判断相关性，但必须对每个候选做推理，所以只用于较小候选池。
 
-### Q18：当前 Weighted Sum 是什么？有什么问题？
+### Q18：旧版 Weighted Sum 是什么？有什么问题？
 
-当前代码使用：
+2026-09-28 之前的代码使用（现已删除）：
 
 ```text
 fused_score = vector_weight × vector_score
             + keyword_weight × keyword_score
 ```
 
-默认权重是向量 0.75、关键词 0.25。代码把向量分数限制在 0–1，把本次 BM25 命中的最高分归一为 1，再做加权。
+旧版默认权重是向量 0.75、关键词 0.25。代码把 ES 转换后的向量分数限制在 0–1，把本次 BM25 命中的最高分归一为 1，再做加权。
 
 优点：简单、直观、可以解释。
 
@@ -373,23 +374,26 @@ fused_score = vector_weight × vector_score
 
 - 两路分数虽然都在 0–1，含义仍不完全相同；
 - BM25 按“本次结果的最高分”归一，相同文档在不同 Query 下的刻度会变化；
-- 权重 0.75/0.25 目前不是业务 Golden Set 选出来的；
+- 权重 0.75/0.25 不是业务 Golden Set 选出来的；
 - 分数阈值会同时受到归一化和权重影响。
 
-所以“已实现”不等于“当前权重已证明最优”。
+历史调参过程仍可讲述，但成绩属于旧版 Weighted Sum，不能归因于后来替换的 RRF。
 
-### Q19：Weighted RRF 是什么？
+### Q19：当前 RRF 怎么计算？
 
 RRF（Reciprocal Rank Fusion）主要看每个候选在各通道的名次，不直接比较原始分数：
 
 ```text
-rrf_score(d) = w_vector / (k + rank_vector(d))
-             + w_bm25   / (k + rank_bm25(d))
+rrf_score(d) = 1 / (60 + rank_vector(d))
+             + 1 / (60 + rank_bm25(d))
+fused_score(d) = rrf_score(d) / (2 / 61)
 ```
 
 例如某个 Child 在向量通道排第 1、BM25 排第 5，它会同时得到两路名次贡献。没有出现在某一路时，该路贡献为 0。
 
-优点是对“向量分数和 BM25 分数刻度不一致”更稳健；缺点是丢掉了分数间距信息，而且 `k`、通道权重、候选深度仍要选择。RRF 不是天然一定优于 Weighted Sum，只是一个值得低成本 A/B 的候选。
+当前使用等权 RRF，排名从 1 开始；分母 2/61 是两路都排第一的理论上限，即使某一路为空也保持不变。固定缩放不改变 RRF 排序，保留原始 `rrf_score` 供追踪；向量/BM25 分数仅保留作诊断，混合排序不使用它们，同分按块顺序及 ID 排。纯向量/纯关键词模式保留通道原分数。
+
+优点是避开两路分数刻度不一致；缺点是丢掉分差，仍受候选深度、通道质量和 k 影响。0～1 的 RRF 分数不是相关概率；旧阈值和规则重排加分尚需重新评测，不能宣称替换后质量已提高。
 
 ### Q20：Rerank 能不能弥补召回失败？
 
@@ -401,25 +405,23 @@ rrf_score(d) = w_vector / (k + rank_vector(d))
 
 因此实验必须固定三个数字：
 
-- `candidate_top_k`：两路召回和融合后保留多少候选；
-- `rerank_top_n`：送入 Reranker 的候选数；
-- `final_top_k`：最终送给父块恢复/回答的数量。
+- `candidate_top_k`：每个启用通道召回的 Child 数，双路融合池可达其两倍；
+- `rerank_top_n`：从融合池选取的 Child 数，None 使用 candidate_top_k；Parent 模式去重后实际送排数可能更少；
+- `top_k`（Trace 中的 `final_top_k`）：聚合后最终返回的数量，正常为 Parent。
 
 ### Q21：当前项目的 Fusion/Rerank 到底做到哪了？
 
 当前代码事实：
 
-- Weighted Sum 已实现；
-- Weighted RRF 尚未实现；
+- 等权 RRF 已替换 Weighted Sum，旧权重配置与扫描已删除；
+- 真实 RRF 质量评测尚未完成；历史 Weighted Sum run 保留供离线复算；
 - 规则 Reranker 已实现；
-- Cross Encoder Reranker 已实现并可失败回退；
+- Cross Encoder Reranker 已实现，支持 Child/Parent 粒度并可失败回退；Child 分数支持 mean/max 聚合；
 - `rerank_enabled` 默认是 false；
 - Cross Encoder 默认模型仍是英文 `ms-marco-MiniLM`，中文场景若启用应显式配置合适模型；
 - 既有 T2Retrieval 记录已经给出一次 `BAAI/bge-reranker-base` 的离线增益：Recall@10 从 79.99% 到 84.08%，MRR@10 从 0.8507 到 0.9097。
 
-所以 README 中“没有真实增益报告”的说法不够准确。更准确的是：
-
-> 已有 T2 10k 子集上的向量召回 + Rerank 历史报告，但缺少机器可复算的正式 report 文件，也没有证明当前生产 Hybrid Weighted Sum + 业务 Golden Set 上仍有同样增益。
+这些数字属于历史实验。后续还有 2026-09-22 T2 冻结候选池的 Parent 重排报告，见 [案例与产物链接](../interview/child-parent-rerank-cases.md)。不同实验不能混为同一轮收益，也不能直接外推为当前 v3 全链路效果。
 
 ### Q22：几个常见指标分别是什么？
 
@@ -429,25 +431,25 @@ rrf_score(d) = w_vector / (k + rank_vector(d))
 | Recall@K | 所有正确文档中，有多少比例进入了前 K？ |
 | MRR | 第一个正确结果排得有多靠前？第一名最好。 |
 | nDCG@K | 多个相关结果的整体顺序是否合理，并可考虑不同相关等级？ |
-| Evidence Recall | 回答所需的关键事实有多少真正进入 Prompt 证据？ |
+| Evidence Recall | 所需正例文档有多少进入 Prompt 证据集合？当前不测关键事实覆盖。 |
 | P95 latency | 95% 请求能在多长时间内完成，用于观察长尾延迟。 |
 
-### Q23：Fusion 和 Rerank 应该怎么重新定优先级？
+### Q23：Fusion 和 Rerank 的评测准入原则是什么？
 
 建议拆成“必须测”和“是否实现”：
 
-#### P0：必须测
+#### 基线原则（历史 P0 已完成，新策略按同样原则比较）
 
 1. 固定同一 Golden Set、同一索引、同一 Embedding 模型。
-2. 保存当前 Vector-only 与 Hybrid Weighted Sum baseline。
+2. 保存当前 Vector-only 与 Hybrid RRF baseline；旧 Weighted Sum 的产物独立保留，不覆盖。
 3. 固定候选漏斗，比较 Rerank off/on 的 nDCG、MRR、Evidence Recall、P95。
 4. 中文场景显式使用中文/多语 Reranker，不能拿英文默认模型下结论。
 5. 报告失败样例，而不只报告总平均分。
 
-#### P2：失败证据触发后实现
+#### 新融合的验收
 
-1. 如果 Weighted Sum 在不同 Query 上明显受分数刻度影响，再实现 Weighted RRF。
-2. 如果 RRF 在同集显著提升且没有不可接受的副作用，再替换默认融合。
+1. 当前已按需求直接替换为 RRF；替换实现不等于已证明收益。
+2. 固定索引、模型和候选池，对比旧版与 RRF；在 Dev 重选阈值，再做独立验收。
 3. 如果 Cross Encoder 的业务增益覆盖延迟和部署成本，再在生产默认开启；否则保留为可选能力。
 
 换句话说，**P0 是建立可信选择依据，不是强制把所有候选算法都上线。**
@@ -514,7 +516,7 @@ trace.usage:
   model / input_tokens / output_tokens / total_tokens / cost
 ```
 
-该缺口已于 2026-09-18 修复：计时使用单调时钟，QA payload 已返回请求级 config/timings/usage；供应商未返回的字段记 `unavailable`，不补零。`last_trace` 仅保留兼容调试，正式评测使用 `retrieve_detailed()` 返回的请求局部 Trace。
+该缺口已于 2026-09-18 修复：计时使用单调时钟，QA payload 已返回请求级 config/timings/usage；供应商未返回的字段记 `unavailable`，不补零。当前 `HybridRouter` 已无 `last_trace` 共享状态；正式评测使用 `retrieve_detailed()` 返回的请求局部 Trace。
 
 ### Q28：2026-09-22 受控 Rerank 消融测了什么，结果如何？
 
@@ -533,15 +535,15 @@ trace.usage:
 
 ### Q29：为什么三种 Rerank 看起来都不起作用？
 
-三个机制叠加，与 Reranker 本身的质量无关：
+需要区分实测现象和解释假设，不能排除模型、输入粒度或聚合方式本身的影响：
 
-1. **候选池饱和，没有表演舞台。** 不开 Rerank 时 Dev 30 题里 26 题金文档已全部进入 top-10，任何 Reranker 的可见增益上限就是剩下 4 题。
-2. **rule 档：信号冗余 + 物理上限，结构性惰性。** 其一，hybrid 首排已含 0.25 权重的词项匹配通道，rule 重排再次度量字面覆盖率，属同族信号二次注入，信息增量趋近于零。其二，加成上限为 `0.1 × coverage`（`backend/src/infrastructure/rule_reranker.py`），而 none 档 30 题第 1 名与第 10 名融合分差最小值为 0.108、中位数 0.236——**全部大于 0.1，rule 档在数学上不可能把任何第 10 名以后的候选提到第 1 名**，只能在分差小于 0.1 的中段翻弄。换 jieba 分词器后 25/30 题 top-10 排序确实变了，但金文档名次决策与 char-bigram 完全相同（4 差 / 1 好 / 25 不变）：分词粒度只改变非金文档之间的"空转"顺序，不改变任何指标相关的决策。
-3. **cross_encoder：有真实的新信息，但被实现浪费。** 交叉注意力语义匹配是首排不具备的信息，也是唯一在尾部做出大动作的档位（Recall@3 +9.4pt、nDCG@10 +2pt 全线正向）；但 `cross_encoder_reranker.py` 将交叉编码器分数**整分替换**融合分（`"score": score`），丢弃 dense 首排的头部信息，换来 4 题金文档从第 1 掉到第 2~5 名。同时 Dev 仅 30 题，Recall@10 差值 +4.4pt 的配对 bootstrap 95% CI 为 [0.000, 0.100]，跨零不显著——**不是没效果，是当前基准量不出这个量程**。
+1. **可提升空间有限。** 历史分析中 Dev 30 题有 26 题不开重排已达到 Recall@10 满分，因此该指标的正向空间集中在剩余 4 题；头部排序仍有改进和退化空间。
+2. **规则信号与 BM25 有重叠。** rule 使用字面覆盖率，并在 Child 融合分上最多加 0.1。这个上限约束同一 Child 池中的名次变化，但不能把它直接套到经过阈值过滤、Parent 聚合和文档去重后的最终名次。两种分词的 MRR 相同，Recall@3 与 nDCG 却不同，因此不能说“没有任何指标相关变化”。
+3. **CE 整分替换是一个待验证因素。** 实现确实以 CE 分替换融合分；历史结果同时出现尾部召回提升与头部退化。没有固定输入比较分数混合、重排粒度和聚合方式前，不能断言退化由整分替换导致。历史分析给出的 Recall@10 差值配对区间为 [0.000, 0.100]，包含零，仅说明该次估计未排除零收益。
 
-可复用的面试口径：
+面试表述应是：
 
-> 规则重排与首排 keyword 通道信号同源、且 0.1 加成上限小于首尾分差，结构性惰性；换 jieba 只改变非金文档间的空转排序，金文档决策纹丝不动；CrossEncoder 有真实信息增量（尾部指标全线上升），但被整分替换实现浪费在破坏头部上，且饱和的千篇基准加 30 题样本不足以让它显形。
+> 这轮重排提高了尾部召回，但未满足 MRR 不下降的开启条件。我检查了基准饱和度、规则信号重叠、CE 整分替换与 Child 聚合，保留这些解释作为下一步消融方向，没有把相关现象包装成唯一因果结论。
 
 ### Q30：CRUD-RAG-mini 基准的分辨力边界在哪里？
 
@@ -549,18 +551,28 @@ trace.usage:
 
 **能测的**：检索模式级差异。Test 120 题上 hybrid 0.882 < vector 0.924 < locked 0.975（Recall@10）；同首排配置、仅差 rerank 开关的旧实验对（rule 后排、`rerank_top_n=10`）测出 +7.5pt Recall@10，配对 bootstrap 95% CI [+0.039, +0.117]，不含零，显著。
 
-**测不了的**：两个强配置之间 ±5pt 的小差异——恰是 Rerank 精调与重排模型升级所在的区间。原因有二：池子小且随机干扰占多数，dense 首排近乎饱和（Dev 26/30 满分；locked 已到 0.975，headline 指标仅剩 2.5pt 理论空间）；每题金文档只有 1~3 个，Recall@10 每题只能取 0、1/3、1/2、2/3、1 等离散值，30 题平均后颗粒极粗。
+**需要谨慎的**：强配置之间的小差异。检测能力取决于逐题方差和样本量，不能统一断言 ±5pt 都测不了。当前有两个限制：池子小且随机干扰占多数，dense 首排近乎饱和（Dev 26/30 满分；locked 已到 0.975，headline 指标仅剩 2.5pt 理论空间）；每题金文档只有 1~3 个，Recall@10 每题只能取 0、1/3、1/2、2/3、1 等离散值，30 题平均后颗粒极粗。
 
 因此在该基准上的敏感指标是 **Hit@1（0.833）、Recall@1（0.506）、MRR@10（0.892）**——它们仍有头寸；Q28 消融的退化只在头部指标上显现，与此一致。配套纪律：比较两个配置必须报配对 bootstrap CI，**CI 跨零不改默认配置**。
 
-### Q31：下一步候选动作（2026-09-22 分析结论，待确认后执行）
+### Q31：历史候选动作（2026-09-22，未实施，不构成当前待办承诺）
 
 1. **分数混合替代整分替换**：`final = α × rerank分 + (1−α) × 原融合分`，α 做成请求级配置，与 `rerank_top_n` 同路数；`cross_encoder_reranker.py` 与 `rule_reranker.py` 同改。验收标准：Dev 扫 α ∈ {0.3, 0.5, 0.7}，**MRR 不低于 none 且 Recall@10 不低于 none** 才换默认值，赢的 α 上 Test 确认。
 2. **`score_run.py` 补配对 bootstrap CI 输出**，零成本落实 Q30 的 CI 纪律。
 3. **扩池重建基准**：复用 query-first 抽样（金文档强制入池）与现有困难负例逻辑，`corpus_size` 扩到 5000~10000，目标把基线 Recall@10 压回 0.6~0.75 工作区间，重新开放强配置区的分辨力。成本为重建索引与重跑冻结流程。
-4. **rule 重排降级**：作为排序器的价值已被 Q28–Q29 证伪，合理归宿是降级为 trace 观测信号或默认关闭；保留代码作为消融对照组。
+4. **rule 保持可选**：本轮未满足默认开启条件，不能据此否定它在其他场景的排序价值；当前保留代码且默认关闭，作为消融对照组。
 
-一次只动一个变量：先做 1+2，在 CI 纪律下验证；3 的扩池与重排模型升级（如 bge-reranker-v2-m3）各自独立成轮，不与 1 混在同一轮实验。
+以上是当时的候选路径，分数混合和扩池均未实施。若启动新实验，一次只改变一个因素，保留独立验收集；不得依据已查看过的 Test 反复选择参数。当前新增能力是 Q32 的重排粒度和聚合开关。
+
+### Q32：当前 Child/Parent 重排和 mean/max 聚合如何使用？
+
+`RetrievalConfig` 已支持 `rerank_level=child/parent` 与 `child_score_aggregation=mean/max`。默认仍为重排关闭、child、mean；开启 parent 重排要求 `rerank_backend=cross-encoder`。
+
+两种重排粒度先取同一批前 N 个 Child。Child 模式逐子块评分、过滤，再按 Parent 聚合；Parent 模式先取回父块正文并去重，由 CE 直接评分，成功时不使用 Child 聚合分作为最终分。关闭重排或重排失败时，以 Child 融合分过滤后按所选 mean/max 聚合；失败回退使用完整融合池。
+
+`top_k` 在父块聚合后截取；`rerank_top_n=None` 使用 `candidate_top_k`，不是整个双路融合池。完整参数表见 [评测速查](评测.md#31-检索漏斗参数retrievalconfig)，实现见 `backend/src/retrieval/hybrid_router.py`。
+
+独立 T2 冻结候选池实验比较了 Child-mean、Child-max 与 Parent CE，案例和结果见 [重排案例](../interview/child-parent-rerank-cases.md)。这些历史缓存实验及 Router 回放不等于重新执行当前解析、嵌入、实时检索与回答链路，不据此替换默认配置。
 
 ---
 

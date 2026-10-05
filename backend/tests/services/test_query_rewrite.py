@@ -224,7 +224,10 @@ def test_default_query_rewriter_uses_langchain_invoke(streaming):
     service = QAService(model=model)
     router = RecordingRouter()
     service.retriever = router
-    kwargs = {"history": [{"role": "user", "content": "我们在讨论 RAG 的父子分块"}]}
+    request = service.sessions.begin("local", None, None, {"seed": True})
+    result = service.sessions.complete(request, "我们在讨论 RAG 的父子分块", {
+        "answer": "好的，继续讨论。", "status": "answered", "citations": []})
+    kwargs = {"session_id": result["session_id"]}
     if streaming:
         events = list(service.query_stream("它如何工作？", **kwargs))
         payload = events[-1][1]

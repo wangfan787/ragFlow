@@ -8,6 +8,7 @@ import pytest
 from backend.src.apps.services.qa_service import QAService
 from backend.src.config.retrieval_config import RetrievalConfig
 from backend.src.infrastructure.cross_encoder_reranker import CrossEncoderReranker
+from backend.src.retrieval.hybrid_fusion import HybridFusion
 from backend.src.retrieval.hybrid_router import HybridRouter
 
 
@@ -245,7 +246,7 @@ def _gated_router(vector_rows=None, keyword_rows=None) -> tuple[HybridRouter, di
     ],
 )
 def test_retrieval_mode_gates_unselected_channels(mode, expected):
-    # Q24：weight=0 不等于不执行；只有 retrieval_mode 能保证通道不执行
+    # 只有选中的通道执行；Hybrid 使用 RRF。
     router, calls = _gated_router([_child_row("c1", 0.9)], [_child_row("c1", 0.5, keyword=True)])
     results, trace = router.retrieve_detailed("问题", {"retrieval_mode": mode})
     assert calls == expected
@@ -254,20 +255,53 @@ def test_retrieval_mode_gates_unselected_channels(mode, expected):
     assert trace["keyword_candidate_count"] == (1 if mode in ("keyword", "hybrid") else 0)
 
 
-def test_vector_weight_one_is_not_vector_only():
-    # 权重全部给向量时，BM25 仍然执行——严格消融必须使用 retrieval_mode
-    router, calls = _gated_router([_child_row("c1", 0.9)], [])
-    router.retrieve_detailed("问题", {"retrieval_mode": "hybrid", "vector_weight": 1.0})
-    assert calls == {"vector": 1, "keyword": 1}
+def test_rrf_rewards_agreement_and_ignores_score_scale():
+    vector = [_child_row(cid, score) for cid, score in zip("abc", [.9, .8, .7])]
+    keyword = [_child_row(cid, score, keyword=True) for cid, score in zip("bda", [1., .5, .2])]
+    rows = HybridFusion().fuse(vector, keyword)
+    assert [row["chunk_id"] for row in rows] == ["b", "a", "d", "c"]
+    assert rows[0]["rrf_score"] == pytest.approx(1 / 62 + 1 / 61)
+    assert rows[0]["score"] == pytest.approx((1 / 62 + 1 / 61) / (2 / 61))
+    assert rows[0]["channel_hits"] == ["keyword", "vector"]
+    assert rows[2]["vector_score"] == rows[3]["keyword_score"] == 0.
+    for row in keyword:
+        row["keyword_score"] *= 100
+    assert [(row["chunk_id"], row["score"]) for row in HybridFusion().fuse(vector, keyword)] == [
+        (row["chunk_id"], row["score"]) for row in rows
+    ]
+
+
+def test_rrf_empty_channel_keeps_fixed_scale_and_default_threshold_returns_hits():
+    assert HybridFusion().fuse([], []) == []
+    router, _ = _gated_router([_child_row("c1", .9)], [])
+    results, trace = router.retrieve_detailed("问题", {"retrieval_mode": "hybrid"})
+    assert results[0].metadata["score"] == pytest.approx(.5)
+    assert trace["fusion_method"] == "rrf" and trace["rrf_rank_constant"] == 60
+
+
+def test_default_rrf_parent_score_is_not_diluted_by_extra_weak_children():
+    vector = [
+        _child_row("good", .99, parent_id="correct"),
+        _child_row("bad", .95, parent_id="wrong"),
+        _child_row("weak-a", .8, parent_id="correct"),
+        _child_row("weak-b", .7, parent_id="correct"),
+    ]
+    keyword = [_child_row("good", 1., keyword=True, parent_id="correct"),
+               _child_row("bad", .9, keyword=True, parent_id="wrong")]
+    router, _ = _gated_router(vector, keyword)
+    results, trace = router.retrieve_detailed("问题", {"rerank_enabled": False})
+    assert results[0].metadata["primary_matched_child_id"] == "good"
+    assert results[0].metadata["score"] == pytest.approx(1.)
+    assert len(results[0].metadata["family_contributors"]) == 3
+    assert trace["child_score_aggregation_effective"] == "max"
 
 
 def test_single_channel_mode_keeps_raw_channel_score_scale():
-    # 单通道模式下融合分应等于通道原始分（阈值才可跨模式比较）
+    # 单通道保留原始分数，不使用 RRF 排名分替换。
     vector_router, _ = _gated_router([_child_row("c1", 0.6)], [])
     results, trace = vector_router.retrieve_detailed("问题", {"retrieval_mode": "vector"})
     assert results[0].metadata["score"] == pytest.approx(0.6)
-    assert trace["vector_weight_effective"] == 1.0
-    assert trace["keyword_weight_effective"] == 0.0
+    assert trace["fusion_method"] is None
 
     keyword_router, _ = _gated_router([], [_child_row("c1", 0.4, keyword=True)])
     results, trace = keyword_router.retrieve_detailed("问题", {"retrieval_mode": "keyword"})

@@ -1,6 +1,6 @@
 # RAG 项目统一实施计划
 
-更新日期：2026-09-19。
+更新日期：2026-09-23。
 
 本文件是项目唯一有效的计划与能力盘点。旧版按 01–08 拆分的阶段稿已经删除；后续开发只更新本文件，不再建立互相引用、容易过期的重复计划。
 
@@ -41,16 +41,20 @@
 
 ## 3. 当前事实基线
 
-- `backend/src` 约 5,000 行 Python，核心链路包含解析、父子分块、Embedding、ES、向量/BM25 混合检索、可选 Rerank、父块恢复、证据窗口、回答和引用。
+- 最新回归：2026-09-23，代码基线 `4b32efb`，Conda `agent` 执行 `python -m pytest backend/tests evaluation/tests -q`，结果为 **195 passed**。下文带日期的 102/164 项为历史里程碑，不代表当前测试总数；本次未重跑真实 ES/付费模型评测。
+- 配置统一来自 `config/defaults.yaml` 与 `config/local.yaml`，不读取 shell/.env 业务配置；QA、Embedding、Vision 密钥独立填写。历史实验配置以 run 产物为准，不随仓库默认值变化而改写。
+- `backend/src` 核心链路包含解析、父子分块、Embedding、ES、向量/BM25 混合检索、可选 Rerank、父块恢复、证据窗口、回答和引用。
 - 手写 Markdown/PDF/HTML/TXT 解析器已迁移为 `UnstructuredParser` 统一实现，并修复 PDF/Numba 在只读环境中的冷启动问题。2026-09-21 在 Conda `agent` 环境重跑后端与评测测试，全量 `164 passed`。
 - 2026-09-18 完成 §4.2 四项生产评测前置改造：`retrieval_mode` 通道门控、`rerank_top_n` 漏斗、请求级 `QAConfig`、请求级结构化 Trace（config/timings_ms/usage）。默认行为不变（默认 hybrid、Rerank 默认关闭、窗口默认值保持）。Conda `agent` 环境全量 102 个测试通过（含新增 20 个验收测试，现已按功能归并至 `backend/tests/integration/test_retrieval.py`、`backend/tests/services/test_qa_service.py` 与 `backend/tests/foundation/test_request_config.py`）。
-- PDF 当前使用 Unstructured `fast` 策略，不含 OCR 和版面模型；Markdown 表格会被规范化为纯文本，列表内围栏代码可能被拍平。
-- `QueryRewriteService` 已接入 `QAService` 与同步/SSE API：请求可携带 `history`，服务按完整 user+assistant 轮次做最近窗口和 token 裁剪，并把改写后的独立问题同时用于检索和回答；无历史时可按请求开启口语规范化，Step-back 作为默认关闭的实验开关执行双路检索和去重合并。当前仍没有 Conversation/Message/session_id 持久化、歧义澄清协议和查询侧关键词追加。
-- `RetrievalMetadataGenerator`（LLM 生成 important_kwd/question_kwd/title_tks 等检索元数据）有独立实现，但 `EmbeddingIndexer` 从未调用它，相关字段目前既未生成也未参与 BM25 检索。**2026-09-19 决定暂缓接线**：RAGFlow 同类开关（`auto_keywords`/`auto_questions`）默认关闭，逐子块 LLM 成本与收益未经评测证明，当前 Golden Set 也未呈现 BM25 召回缺口；接入方案保留在 `docs/compare.md` §4.1-4.3 备查，失败证据触发后再启动（文件头部已标注用途与 TODO）。
+- PDF 当前使用 Unstructured `fast` 策略，不含 OCR 和版面模型；Markdown 代码/表格由语法保护层保留原文与精确坐标，其他格式的表格优先保留引擎提供的 `text_as_html`。当前分块策略为 `parent-child-v3`，历史 v2 产物不自动迁移。
+- 同步/SSE 问答已统一使用服务端 `session_id`，删除客户端 `history`。SQLite 保存完整轮次、摘要与覆盖位置，自动压缩默认生效；生成保留原问题，改写只供检索和辅助。接口、预算与容量见 [会话说明](../conversation.md)。歧义澄清和查询侧关键词追加仍未实现。
+- 索引侧 doc2query（LLM 生成 important_kwd/question_kwd/title_tks 等检索元数据）当前只有候选设计；旧孤立 `RetrievalMetadataGenerator` 及其环境配置已删除，生产入库不生成这些字段，BM25 也不查询它们。**2026-09-19 决定暂缓接线**：RAGFlow 同类开关（`auto_keywords`/`auto_questions`）默认关闭，逐子块 LLM 成本与收益未经评测证明，当前 Golden Set 也未呈现 BM25 召回缺口；接入方案保留在 `docs/compare.md` §4.1-4.3 备查，失败证据触发后再通过统一模型入口实现。
 - `/qa/query` 已在 FastAPI 应用入口挂载（`main.py`），并有 HTTP 端到端替身测试（鉴权 401、合法请求 200、非法配置 422）。
 - 2026-09-19 完成后端 P0 产品闭环：`ServiceError` 在抛出点声明 HTTP 状态码（400/404/409/413/422/502）；`doc_id` 改 UUID 并登记 SHA256/size/created_at/counts；状态机统一 uploaded/indexing/ready/failed，新增 detail/source/delete/retry 与同文档并发 409；检索无命中返回 `status="no_evidence"` 产品响应（不再抛业务错误，评测 Runner 按新协议映射 run 行）；新增 SSE `/qa/query/stream`（answer/citation/done/error 事件，配置校验挡在流开始前，断开取消尽力而为）；同步重任务端点全部改为线程池执行（def 端点 / `asyncio.to_thread`）。2026-09-21 加入查询改写、口语规范化和 Step-back 请求级接线后，Conda `agent` 环境全量 `backend/tests + evaluation/tests` 为 `164 passed`。
+- Child/Parent 重排与 mean/max 聚合已进入生产配置和 Router；独立的 T2 冻结候选池实验见 [重排案例](../interview/child-parent-rerank-cases.md)，不等同于当前 v3 全链路重新评测，也未替换生产默认策略。
 - T2Retrieval 子集和向量产物作为历史实验保留，不再作为当前主评测集。
 - 当前主评测集确定为 `CRUD-RAG-mini-v1`：1,000 篇文档、150 条 1/2/3 文档问答；详细的数据契约、阶段任务和验收标准见 `docs/plan/评测.md`。
+- 指标边界：下文 96.7% 为 Citation Validity（引用是否来自所给证据），93.1% 为证据文档召回；均不表示逐条事实已获支持。历史引用文档精度为 87.36%，语义 Judge 尚未实现。
 - 文档、代码与实际运行结果冲突时，以当前代码和实际测试结果为准，并立即回写本文件。
 
 ## 4. 算法层
@@ -62,10 +66,10 @@
 | 文本解析（md/pdf/html/txt） | √ 已实现并回归验证 | `UnstructuredParser` 统一四种格式；PDF 依赖按需加载并规避只读 Numba 缓存；Markdown/HTML/TXT/PDF、嵌套代码、表格文本、非法 UTF-8 均有测试 | `P1`：补部署 bootstrap 与冷/热耗时；`P2`：失败数据触发后再做 OCR、hi_res、复杂表格结构恢复 |
 | Document 与来源追踪 | √ 已实现并回归验证 | 全链路使用 `Document(page_content, metadata)`；`exact/line_only/unavailable` 精度分级、重复文本单调回定位、HTML 实体和 Child 坐标投影已有回归 | `P1`：清理无消费者字段、形成 20–30 篇精度分布报告；不再作为算法 P0 |
 | Markdown 图片/VLM | √ 已实现并回归验证（P0-A） | `AssetFileStore` 按 SHA256 去重保存且读取前校验路径边界；`AssetRegistry` 用 asset_id+document_id+owner 单条 JOIN 鉴权；`ImageDescriber` 输出受 schema 约束 JSON 并程序拼装可检索文本；VLM 失败保留资产与 failed 状态、非法引用保留 skipped 占位；image 为原子块且 `asset_id` 透传到 Citation；`/assets/preview` 二次鉴权。权限/穿越/重复/失效均有测试 | `P1`：真实 VLM 模型联调、线上伴随图片上传通道；HTML/PDF 图片与 OCR 维持不做 |
-| 父子分块与 Embedding | √ 已实现并回归验证 | Parent/Child 硬 token 上限、内容逐字守恒、坐标投影、稳定 profile hash、只嵌 Child 正文、向量数量/维度/NaN/零向量校验均有测试 | `P2（条件触发）`：只有失败集证明必要时才增加 profile 或比较输入模板，不预建多套方案 |
+| 父子分块与 Embedding | √ 已实现并回归验证 | 普通正文 Parent/Child token 上限；code/table 默认完整保留、嵌入受模型输入上限约束；内容逐字守恒、坐标投影、稳定 profile hash、只嵌 Child 正文、向量数量/维度/NaN/零向量校验均有测试 | `P2（条件触发）`：只有失败集证明必要时才增加 profile 或比较输入模板，不预建多套方案 |
 | ES 索引与重入库 | √ 已实现 | Parent 保存上下文、Child 保存向量；先 upsert 再清理陈旧 ID；记录 index/schema/model/profile 信息 | `P2`：需要真实发布迁移时再做蓝绿索引、双写和回滚 |
-| Hybrid 检索与 Rerank | √ 已实现并完成首次真实 baseline（P0-B） | 向量/BM25、Weighted Sum、父块聚合、规则/Cross-Encoder Rerank 均已编码；`retrieval_mode` 严格门控、`rerank_top_n` 漏斗、失败回退和请求级 Trace 已测试；`evaluation/runner` 只调用生产实现，替身测试 8 项通过 | 2026-09-19 真实 run 已执行（详见 [`评测.md`](评测.md)）：全量 1,000 篇索引、Dev 单变量扫描锁定、Test 各运行一次；锁定配置召回 97.5%（默认 hybrid 88.2%）、evidence recall 93.1%、引用正确率 96.7%、P95 2.3s、成本约 ¥2。元数据增强、并行/隔离放 `P1`，Weighted RRF 仅失败触发 `P2` |
-| Evidence、回答与引用 | √ 已实现并回归验证 | 父块恢复、锚定窗口、child/window/full-parent 请求级配置、Prompt 总预算、证据约束回答、引用范围校验及文档级 Citation scorer 已实现 | 窗口默认值并入同一个 **P0-B** Dev 扫描，不再单列 P0；`no_evidence` 产品协议已随后端 P0 交付（2026-09-19）；claim-level Correctness/Coverage 归 `P1` Judge |
+| Hybrid 检索与 Rerank | √ 已实现并完成首次真实 baseline（P0-B） | 向量/BM25、等权 RRF（k=60，固定缩放）、Child mean/max 聚合及 Child/Parent 重排均已编码（Parent 仅支持 Cross-Encoder）；默认仍为 rerank off、child、mean；`retrieval_mode` 严格门控、`rerank_top_n` 漏斗、失败回退和请求级 Trace 已测试；`evaluation/runner` 只调用生产实现，替身测试已覆盖编排与记录契约 | 2026-09-19 真实 run 已执行（详见 [`评测.md`](评测.md)）：全量 1,000 篇索引、Dev 单变量扫描锁定、Test 各运行一次；锁定配置召回 97.5%（默认 hybrid 88.2%）、evidence recall 93.1%、引用有效率 96.7%、P95 2.3s、成本约 ¥2。元数据增强按失败证据触发，通道并行/隔离放 `P1`，2026-09-28 已用等权 RRF 替换 Weighted Sum；左述成绩属于旧版，新融合质量待评测 |
+| Evidence、回答与引用 | √ 已实现并回归验证 | 父块恢复、锚定窗口、child/window/full-parent 请求级配置、Prompt 总预算、证据约束回答、引用范围校验及文档级 Citation scorer 已实现 | 历史 **P0-B** Dev 证据模式扫描已完成（选中 full_parent，生产默认仍为 window）；`no_evidence` 产品协议已随后端 P0 交付（2026-09-19）；claim-level Correctness/Coverage 归 `P1` Judge |
 | 知识图谱、联网搜索、Agent/MCP | × 暂不实现 | 当前单轮 RAG 主线不依赖这些能力 | `P2`：只有多跳、时效性或工具调用失败形成稳定业务类别时再立项 |
 
 ### 4.1 算法层近期目标
@@ -75,7 +79,7 @@
 算法层的两个 P0 工作包已于 2026-09-19 完成编码并回归；包含随后端与查询预处理新增回归在内，2026-09-21 全量为 `164 passed`：
 
 1. **P0-A Markdown 图片/VLM 最小闭环**：已实现。资产保存/归属鉴权/VLM 描述/原子 image block/`asset_id` 透传/鉴权预览全部打通并有验收测试；真实 VLM 模型联调归 P1。
-2. **P0-B 生产 Runner 与真实 baseline**：√ 已完成（2026-09-19）。全量 1,000 篇索引 → Dev 扫描锁定 → Test 正式 run 全部执行，结果见 [`评测.md`](评测.md)：召回 88.2%→97.5%，引用正确率 96.7%，P95 2.3s。
+2. **P0-B 生产 Runner 与真实 baseline**：√ 已完成（2026-09-19）。全量 1,000 篇索引 → Dev 扫描锁定 → Test 正式 run 全部执行，结果见 [`评测.md`](评测.md)：召回 88.2%→97.5%，引用有效率 96.7%，P95 2.3s。
 
 ### 4.2 已完成：生产评测接入的四个前置改造
 
@@ -95,25 +99,25 @@
 | 功能 | 状态 | 现有优点 | 当前缺点 | 是否需要优化、如何优化 |
 |---|---|---|---|---|
 | FastAPI 基础 | √ 已实现 | 有 health、CORS、统一异常入口、request ID 和总延迟响应头；同步重任务端点已改为线程池执行（def 端点 / `asyncio.to_thread`），不再阻塞事件循环 | SSE 生成阶段的取消是尽力而为（当前分块完成后停止） | `P1`：真实并发压测与请求超时预算 |
-| QA API | √ 已实现 | `/qa/query` 与 `/qa/query/stream` 共用生产 QA 链路；请求级 `retrieval_config/qa_config/history` 覆盖；鉴权、配置 422、空问题、`no_evidence`、SSE 事件和查询改写均有 HTTP 替身测试 | 真实供应商流式返回、断开取消与改写收益尚未联调/评测 | P0 已完成；`P1`：持久化会话、真实 SSE 联调与查询改写 A/B |
+| QA API | √ 已实现 | 同步/SSE 共用会话、预算与压缩；支持 `session_id/request_id` 和请求级检索/QA 配置，旧 `history` 返回 422 | 真实供应商流式返回、断开取消与改写收益尚未联调/评测 | `P1`：真实 SSE 联调与查询改写 A/B |
 | 参数校验 | √ 已实现 | `ServiceError` 抛出点声明状态码，已区分 400/404/409/413/422/502；问题空值/3072 字节上限、文件类型白名单、上传大小限制（`upload.max_bytes` 默认 20 MiB）均有测试 | 上传端点仍先 `await file.read()` 再检查大小，能拒绝超限文件但不能避免大请求先占用内存；请求模型的深度约束仍较宽 | `P1`：改为分块读取并在超过阈值时提前停止；真实滥用样例出现后继续收紧模型约束 |
-| Demo 认证 | △ Demo 实现 | JWT 生成与校验路径完整 | 默认账号、密码和 secret；无用户表、角色和数据归属 | 演示期明确标记非生产；`P1` 优先做数据归属，完整账户系统可 `P2` |
+| Demo 认证 | △ Demo 实现 | JWT 生成与校验路径完整 | 默认账号、密码和 secret；无用户表与角色体系，文档 owner 尚未用于完整权限隔离 | 演示期明确标记非生产；`P1` 优先做数据归属，完整账户系统可 `P2` |
 | 文档上传 | √ 已实现 | `doc_id` 为 UUID；登记 SHA256/size/created_at，超限 413；源文件保存与元数据登记分离；API 响应不外泄 `file_path` | 大小校验发生在整文件读入内存之后；无同哈希重复上传检测 | `P1`：流式限量读取；`P2`：存储成为瓶颈后再做 SHA256 秒传/去重 |
-| 文档生命周期 | √ 主闭环已实现 | 状态机统一 uploaded/indexing/ready/failed；detail/source/delete/retry 端点齐全；同文档并发 ingest 返回 409（进程内锁）；失败保留 error 可重试；删除按索引→源文件→文档记录清理，索引失败保留记录可重删 | 删除尚未清理该文档的 assets 表记录和无引用图片文件；节点级进度、图片列表接口未做 | `P1`：补资产引用清理与孤儿文件回收；进度上报随后台入库任务一起做 |
+| 文档生命周期 | √ 主闭环已实现 | 状态机统一 uploaded/indexing/ready/failed；detail/source/delete/retry 端点齐全；同文档并发 ingest 返回 409（进程内锁）；失败保留 error 可重试；删除按索引→源文件→文档记录清理，索引失败保留记录可重删 | 尚无保持 doc_id 的内容编辑 API；删除未清理该文档的 assets 表记录和无引用图片文件；节点级进度、图片列表接口未做 | `P1`：补内容更新链路、资产引用清理与孤儿文件回收；进度上报随后台入库任务一起做 |
 | 知识库实体 | × 未实现 | ES filters 可作为底层基础 | 没有知识库、文档集合、配置和归属 | `P1`：增加 KnowledgeBase；文档、检索配置、权限都绑定 knowledge_base_id |
-| 用户数据归属 | × 未实现 | — | 认证用户之间没有文档和会话隔离 | `P1`：服务端根据 owner/tenant 注入过滤；不接受客户端任意权限过滤 |
-| 查询改写 | √ 主链接入，△ 产品化未完成 | `history` 已进入同步/SSE API；多轮指代消解、无历史口语规范化、失败回退和请求级 Trace 已接 `QAService`；Step-back 以默认关闭的实验开关执行双路检索补漏 | 历史由客户端随请求传入，无 Conversation/Message/session_id；尚无歧义澄清；未做口语/多轮/Step-back 切片 A/B，也未实现查询侧关键词追加 | `P1`：持久化最近会话消息、增加澄清短路并完成三个切片的 Recall/MRR、误改写率、P95 与成本评测 |
+| 用户数据归属 | △ 资产与会话已校验 | 图片预览校验文档归属，会话创建/读取/写入按 JWT sub 隔离 | 文档列表、源文件、入库、删除和检索尚无完整 owner 过滤 | `P1`：服务端根据 owner/tenant 注入过滤；不接受客户端任意权限过滤 |
+| 查询改写 | √ 主链接入，△ 收益待测 | 从服务端摘要与近期原文取独立预算视图；失败保留原问题和生成历史，支持口语规范化及可选 Step-back | 尚无歧义澄清、切片 A/B 和查询侧关键词追加 | `P1`：澄清短路及 Recall/MRR、误改写率、P95 与成本评测 |
 | 子问题拆分 | × 未实现 | — | 复合问题只能整句检索一次 | `P2`：业务集证明多实体问题是主要失败后再做；限制最多 3 个子问题 |
-| 会话与消息 | × 未实现 | 改写组件已定义完整轮次裁剪方式 | 无 Conversation、Message、session_id；当前没有代码负责保存或加载历史 | `P1`：先持久化最近 N 个“user 问题 + assistant 回答”完整轮次；这是会话窗口，不称为长期 Memory，也不把历史回答当知识证据 |
-| 会话摘要 | × 未实现 | — | 长对话无法压缩和跨轮回顾 | `P2`：最近 N 轮稳定后再做“持久摘要+近期消息”，摘要需版本化和可追踪 |
+| 会话与消息 | √ 已实现 | SQLite 存档、owner 隔离、TTL/容量限制、版本提交与请求幂等；流中断不留半轮 | 单机存储，无会话列表/删除 UI | 按业务需要扩展管理接口，不把历史回答当知识证据 |
+| 会话摘要 | √ 已实现，△ 实测待校准 | 完整输入触发滚动压缩，摘要立即持久化并替换工作历史；失败候选不重复压缩，保留近期完整轮次 | token 为工程估算，摘要质量和成本未做真实模型评测 | 校准安全余量并评测信息保留率、延迟和截断率 |
 | 意图识别 | × 未实现 | — | 所有输入都直接检索，闲聊和模糊问题没有专门路径 | `P1`：首版只做 KB_QUERY、CHAT、CLARIFY 三类；不复制复杂意图树 |
-| 问答编排 | △ 阶段化链路 | 当前已有“改写→可选 Step-back→检索→`no_evidence` 短路→窗口→生成→引用”，阶段耗时和可选 Trace 均为请求局部 | 尚无显式 `QAContext`、意图分类、会话加载与消息持久化；同步与 SSE 仍各自编排相似阶段 | `P1`：提取共享请求级 Pipeline/Context，再接意图、会话和持久化，避免两条入口继续重复演进 |
+| 问答编排 | √ 共享准备与提交 | 同步/SSE 共用 PreparedQA 消息、预算、压缩、引用与版本提交；显式 knowledge/conversation 模式 | 尚无自动意图分类 | 以业务失败样例决定是否增加自动分类 |
 | 空结果与拒答 | √ 已实现 | 检索无命中返回 `status="no_evidence"` 产品响应（answer/citations 为空、trace 保留、usage 如实 unavailable），同步与 SSE 行为一致；评测 Runner 按新协议把该响应映射为 run 行 `no_evidence` 状态 | 拒答评测集（不可回答问题切片）未建 | `P0` 协议已完成；评测集随业务回归集建设（`P1`） |
 | SSE 流式输出 | √ 已实现（P0 提前交付） | `/qa/query/stream` 已实现 answer/citation/done/error 事件；配置校验挡在流开始之前（422 而非半途断流）；无证据只发 done；客户端断开即停止发送；与 `/qa/query` 共用同一检索/窗口/引用链路，有 HTTP 替身测试 | 真实模型的流式联调未做；usage 依赖供应商在流分块中返回，否则如实 unavailable；无 TTFT/取消率指标 | `P1`：真实模型联调后补 TTFT、取消率评测 |
 | 后台入库任务 | × 未实现 | 同步流程便于当前调试 | 大文档阻塞请求，无进度和节点重试 | `P1`：先用轻量 worker/任务表，不为个人项目直接引入 MQ |
-| 幂等与并发保护 | × 未实现 | — | 重复点击会重复处理；模型调用无并发上限 | `P1`：入库以 doc_id+profile_hash 幂等；模型入口使用 semaphore；多实例后再考虑 Redis |
+| 幂等与并发保护 | △ 部分实现 | 同一 DocumentService 实例内，同文档并发 ingest 以锁保护并返回 409；同 doc_id/策略的确定性 chunk_id 支持覆盖并清理旧块 | 已完成任务再次提交仍会重算；重复上传生成新 doc_id；无跨进程互斥和模型调用并发上限 | `P1`：补任务幂等与模型 semaphore；多实例后再考虑跨进程协调 |
 | 模型路由/熔断 | × 未实现 | Chat、Embedding、Vision 配置已分离 | 无候选模型、健康状态和自动切换 | `P2`：先做 primary+fallback 和超时记录，再决定是否需要三态熔断 |
-| Trace | √ 已实现 | 有 request ID、检索候选、分数、引用、QA budget 和总请求延迟；QA 响应已返回请求级 `trace.config`（配置快照/模型/索引名）、`trace.timings_ms`（retrieval/window/generation/citation/total）和 `trace.usage`（供应商未返回记 unavailable，不补零） | `HybridRouter.last_trace` 仍保留作调试兼容 | P0（评测）已完成：Runner 已原样录制请求级 trace 并写入 run JSONL（`production_adapter`） |
+| Trace | √ 已实现 | 有 request ID、检索候选、分数、引用、QA budget 和总请求延迟；QA 响应已返回请求级 `trace.config`（配置快照/模型/索引名）、`trace.timings_ms`（retrieval/window/generation/citation/total）和 `trace.usage`（供应商未返回记 unavailable，不补零） | 检索通过 `retrieve_detailed()` 返回请求局部 Trace，已无 `HybridRouter.last_trace` 共享状态；真实并发压测待补 | P0（评测）已完成：Runner 已原样录制请求级 trace 并写入 run JSONL（`production_adapter`） |
 | 用户反馈 | × 未实现 | — | 真实失败不能沉淀为评估集 | `P1`：点赞/点踩、失败原因和备注；负反馈一键转 regression case |
 | 前端问答页 | × 未实现 | 已有 API 与页面目标 | 无成品体验 | `P0`：完成上传、入库状态、提问、答案、引用预览五个核心状态 |
 | 管理后台/审计 | × 未实现 | — | 无知识库、Chunk、Trace、评测管理 | `P2`：先做最小文档和 Trace 页面；配置审计等真实需要出现后再补 |
@@ -126,7 +130,7 @@
 |---|---|---|---|
 | 多轮指代/省略 | 上轮讨论 embedding-3，本轮问“它最多支持多少 token” | 结合最近会话生成无需上下文也能理解的 `standalone_query` | 已接主链；当前历史由客户端随请求传入，服务端会话加载仍属 `P1` |
 | 口语与文档文体差异 | “这玩意咋老卡死” vs “线程阻塞、锁等待、死锁” | 在不改变意图的前提下生成规范独立问句 | 已实现请求级开关并接主链，默认关闭；收益 A/B 与两级 `retrieval_query` 仍属 `P1` |
-| 文档侧缺少用户问法 | 正文只写专业描述，没有自然问句 | 入库时生成 `question_kwd/question_tks` 并接入 BM25 | 生成器存在但未接入；作为索引侧互补方案评测 |
+| 文档侧缺少用户问法 | 正文只写专业描述，没有自然问句 | 入库时生成 `question_kwd/question_tks` 并接入 BM25 | 旧生成器已删除，仅保留候选设计；失败证据触发后实现并评测 |
 | 查询与答案体差异仍大 | 简短问题难以靠普通改写命中专业段落 | HyDE 生成假设答案，仅作为检索表示，不作为回答证据 | `P2` 条件候选；普通改写失败集证明必要后 A/B |
 | 具体问题缺少背景原理 | “为什么这个锁在此处无效”需要先理解锁和并发模型 | Step-back 生成上位背景问题，与原问题分别检索后融合 | 已实现为默认关闭的实验开关；背景知识切片 A/B 未完成，未证明前不进入默认链路 |
 
@@ -184,7 +188,7 @@ init（固定数据和索引）
 
 | 数据集/能力 | 状态 | 当前规模或内容 | 如何验证 | 缺点与下一步 |
 |---|---|---|---|---|
-| 单元与集成测试 | √ 已验证 | 2026-09-21 在 Conda `agent` 重跑后端+评测：`164 passed` | 覆盖解析、分块、索引、检索、窗口、引用、生命周期 API、同步/SSE、`no_evidence`、多轮改写、口语规范化、Step-back 和评测契约 | 继续作为每次改动的回归门槛；真实 ES/模型/流式联调单独记录 |
+| 单元与集成测试 | √ 已验证 | 2026-09-23 在 Conda `agent` 重跑后端+评测：`195 passed` | 覆盖解析、分块、索引、检索、窗口、引用、生命周期 API、同步/SSE、`no_evidence`、多轮改写、口语规范化、Step-back 和评测契约 | 继续作为每次改动的回归门槛；真实 ES/模型/流式联调单独记录 |
 | T2Retrieval 子集 | √ 历史资产 | 10,000 篇候选文档、500 Query、2,614 qrels；已有向量产物和评分脚本 | 保留已有产物，不删除、不继续扩建 | 只能做检索实验，不能覆盖回答与引用；不再作为当前主线 |
 | CRUD-RAG Mini | √ 已冻结 | 1,000 篇文档、150 条问答，1/2/3 文档各 50 条；300 qrels | 固定 commit/seed/SHA；30 dev + 120 test；事件级隔离；validator 通过 | 原始与生成数据不提交 Git；通过构建器可复现 |
 | 解析评估集 | √ 最小回归已验证 | Markdown/PDF 真实样例，以及 HTML/TXT、重复文本、实体、嵌套代码和表格文本回归 | 已约束内容存在、block types、来源精度分级、重复坐标和失败语义 | `P1`：扩到 20–30 篇并形成内容/结构/span 精度分布报告；不再重复列为算法 P0 |
@@ -193,7 +197,7 @@ init（固定数据和索引）
 | Evidence 评测 | √ 已实现并完成真实 run（P0-B） | 基于 CRUD-RAG 的 reference news 与 qrels；真实生产 evidence 已录制并产出 baseline | Evidence Recall/Precision 按 overall 与 1/2/3docs 分片；锁定配置 evidence recall 93.1% | 剩余工作：claim-level Correctness/Coverage 归 `P1` Judge |
 | 回答正确性 | × 未实现 | question、expected facts、answer | 先做必要事实覆盖和禁止事实；再接 LLM Judge | `P1`：LLM Judge 结果抽样人工校准，不能当绝对真值 |
 | Faithfulness | × 未实现 | answer + 实际 evidence | claim 是否能被 evidence 支持 | `P1`：使用 Ragas 或自建 rubric；保存 judge 原始理由和失败 claim |
-| 引用评测 | △ 文档级 scorer 已实现 | 可计算 Citation Validity 与 Citation Document Precision | 尚不能证明每个回答 claim 被对应引用支持 | `P1`：真实 run 先产出文档级 baseline，再用人工校准 Judge 做 claim-level Correctness/Coverage |
+| 引用评测 | △ 文档级 scorer 已实现 | 可计算 Citation Validity 与 Citation Document Precision | 尚不能证明每个回答 claim 被对应引用支持 | 历史真实 run 已有文档级 baseline；`P1`：用人工校准 Judge 做 claim-level Correctness/Coverage |
 | 拒答评测 | × 未实现 | 业务集中 15%–20% 不可回答问题；生产 `no_evidence` 协议已就绪（2026-09-19），响应可被 Runner 原样录制 | 拒答 Precision、Recall、F1；误拒率和过回答率 | `P1`：不可回答问题切片随业务回归集建设后接入 scorer |
 | Query Rewrite 评测 | △ 三策略已实现并接入主链（2026-09-21），单测齐全、切片级收益未测 | 多轮指代消解（`query_rewrite_enabled` 默认开、`history` 入口）、口语规范化（`colloquial_normalization_enabled`，无历史时生效）、Step-back 背景扩展（`step_back_enabled`，生成背景问题双路检索合并补漏、默认关闭）均为请求级开关；`trace.query_rewrite`/`trace.step_back` 记录结果与耗时；默认配置下评测 Runner 行为不变 | 改写前后检索收益未测：尚缺口语/多轮指代/歧义三个评测切片与 Recall/MRR、意图保持、误改写率对比；Step-back 双路合并对 Recall/MRR 与 P95 的影响未测 | `P1`：三个切片开关 A/B，记录 Recall/MRR、误改写率、P95 和成本；HyDE 维持 `P2` 条件候选（触发条件：文体差异失败切片） |
 | Prompt Injection 安全集 | × 未实现 | 文档注入、用户注入、引用欺骗、越权请求 | 系统指令遵循、数据隔离、拒绝危险行为 | `P1`：首版 15–20 条，所有真实安全失败加入回归集 |
@@ -227,8 +231,8 @@ evaluation/
 │   ├── run_retrieval.py
 │   ├── run_qa.py
 │   └── sweep.py
-├── experiments/                 # 受版本控制的实验配置
-├── judge/                       # 固定 50 条、rubric、Judge 与人工校准
+├── locks/                       # 已锁定配置与扫描摘要
+├── judge/                       # 规划，尚未实现：固定 50 条、rubric 与人工校准
 ├── runs/          # 一次真实调用的完整录制，JSONL
 ├── scores/        # 可重复离线计算的 JSON
 ├── reports/generated/
@@ -277,7 +281,7 @@ P0 验收：
 - 至少一份可复现 baseline 报告和失败案例清单。
 - README 只陈述已经实测的数据。
 
-当前状态：自动化回归与历史真实评测已完成；仍需在提交当前工作区后，用当前版本补一次真实 HTTP“上传→入库→问答→引用/图片预览”smoke，并补干净环境 bootstrap。完成这两项之前，只称“P0 已编码并回归”，不称“当前版本已完成部署验收”。
+当前状态：自动化回归与历史真实评测已完成；仍需用当前版本补一次真实 HTTP“上传→入库→问答→引用/图片预览”smoke，并补干净环境 bootstrap。完成这两项之前，只称“P0 已编码并回归”，不称“当前版本已完成部署验收”。
 
 ### P1：完整的多轮知识库产品
 

@@ -26,11 +26,13 @@ llm:
   max_retries: 1 # SDK 请求重试次数
   qa:
     api_key: "" # 问答和查询改写密钥
-    model: GLM-5.1 # 问答模型
+    model: glm-5.3 # 问答模型；thinking 计入输出预算
     base_url: https://open.bigmodel.cn/api/coding/paas/v4 # 问答 API
-    context_limit_tokens: 32768 # 输入与输出合计预算
-    completion_reserve_tokens: 1024 # 输出预留，同时作为模型 max_tokens
-    prompt_safety_tokens: 256 # 工程计数与供应商 tokenizer 差异余量
+    context_limit_tokens: 256000 # 应用窗口，不能超过实际供应商窗口
+    input_limit_tokens: 0 # 供应商独立输入上限；0 表示仅受总窗口约束
+    completion_reserve_tokens: 32000 # thinking + 正文；同时作为 max_tokens
+    prompt_safety_tokens: 8000 # tokenizer 差异及消息封装余量
+    reasoning_effort: low
     temperature: 0.2 # 生成温度
   vision:
     api_key: "" # 独立显式填写视觉模型密钥
@@ -58,13 +60,12 @@ retrieval:
   top_k: 5 # 聚合后返回父块数
   candidate_top_k: 30 # 每个通道召回池大小
   similarity_threshold: 0.1 # 重排粒度上的最终分数阈值；未重排/失败回退时过滤 Child 融合分
-  vector_weight: 0.75 # 向量权重，与 BM25 权重一起归一化
-  keyword_weight: 0.25 # BM25 权重
+  # hybrid 使用等权 RRF(k=60)，按理论上限缩放到 0~1；旧融合阈值需重新评测。
   retrieval_mode: hybrid # hybrid / vector / keyword
   rerank_enabled: false # 是否执行重排
   rerank_backend: rule # rule / cross-encoder
   rerank_level: child # child / parent；parent 仅支持 cross-encoder，保留 child 默认便于对照
-  child_score_aggregation: mean # mean / max；从 Child 分数计算 Parent 分数，含关闭重排/失败回退
+  child_score_aggregation: max # mean / max；默认保留最强 Child 证据，避免新增弱命中稀释 Parent 分数
   rerank_top_n: null # 选取的 Child 数量，null 使用 candidate_top_k；parent 模式去重后送排
   filters: null # 可选 ES 字段过滤字典
 
@@ -75,6 +76,7 @@ reranker:
   device: "" # 空字符串自动选择，也可填写 cpu / cuda / mps
 
 qa:
+  answer_mode: knowledge # knowledge 使用当前证据；conversation 处理已有对话
   context_top_k: 5 # 进入证据构造的父块数
   evidence_mode: window # window / child_only / full_parent
   evidence_window_tokens: 384 # 单个正文窗口预算，完整结构块只受总预算限制
@@ -87,6 +89,24 @@ query_rewrite:
   max_history_tokens: 2048 # 历史文本预算
   prompt_safety_tokens: 128 # 改写提示词余量
   max_query_tokens: 256 # 改写后问句预算
+  output_tokens: 2048 # 包括 thinking；独立于回答输出预算
+
+conversation:
+  evidence_max_tokens: 16000 # 当前证据总预算
+  recent_tokens: 15000 # 仅压缩时的近期完整轮次保留目标
+  summary_tokens: 4000 # 摘要正文目标
+  summary_output_tokens: 8000 # 摘要 thinking + 正文输出上限
+  summary_input_tokens: 64000 # 分段摘要输入上限，另受模型窗口限制
+  max_summary_calls: 4 # 每个请求最多同步压缩调用次数
+
+sessions:
+  ttl_seconds: 2592000 # 30 天，自成功写入起续期
+  request_lease_seconds: 900 # 崩溃请求可重试；旧执行者不能提交
+  max_turns: 2000
+  max_requests: 4000 # 包含失败请求，防止幂等记录无限增长
+  max_session_bytes: 16777216 # 单会话状态与幂等结果共 16 MiB
+  max_sessions: 10000
+  max_storage_bytes: 268435456 # SQLite 主文件最多 256 MiB；事务日志另占短期空间
 
 dataset:
   t2_dir: dataset/T2Retrieval # 跑子集时在 local.yaml 改为 dataset/T2Retrieval-subset

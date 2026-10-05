@@ -25,7 +25,7 @@ from evaluation.score_run import score_run
 DEFAULT_RETRIEVAL_VARIANTS: dict[str, dict] = {
     "vector": {"retrieval_mode": "vector"},
     "keyword": {"retrieval_mode": "keyword"},
-    "hybrid": {},  # 生产默认：Hybrid Weighted Sum
+    "hybrid": {},  # 生产默认：等权 RRF(k=60)，按理论上限缩放
     "hybrid_rerank": {"rerank_enabled": True, "rerank_backend": "rule", "rerank_top_n": 10},
 }
 

@@ -141,7 +141,7 @@ def mock_http():
 
 
 @pytest.mark.parametrize("kind,model_name,max_tokens,temperature,path", [
-    ("qa", "GLM-5.1", 1024, 0.2, "/api/coding/paas/v4/chat/completions"),
+    ("qa", "glm-5.3", 32000, 0.2, "/api/coding/paas/v4/chat/completions"),
     ("vision", "glm-4.6v-flash", 512, 0, "/api/paas/v4/chat/completions"),
 ])
 def test_chat_wire_request(monkeypatch, mock_http, kind, model_name, max_tokens, temperature, path):
@@ -167,10 +167,27 @@ def test_chat_wire_request(monkeypatch, mock_http, kind, model_name, max_tokens,
     assert body["model"] == model_name
     assert body["temperature"] == temperature
     assert body["max_tokens"] == max_tokens
-    assert body["thinking"] == {"type": "disabled"}
+    assert body["thinking"] == {"type": "enabled" if kind == "qa" else "disabled"}
+    if kind == "qa":
+        assert body["reasoning_effort"] == "low"
     assert "max_completion_tokens" not in body
     assert "extra_body" not in body
     assert len(requests) == 1
+
+
+def test_summary_and_rewrite_have_independent_wire_budgets(mock_http):
+    from langchain_openai import ChatOpenAI
+    from backend.src.apps.services.qa_service import QAService
+    _set_config("llm.qa.api_key", "test-key")
+    requests, client, async_client = mock_http
+    factory = partial(ChatOpenAI, http_client=client, http_async_client=async_client)
+    chat = build_chat("qa", config=_settings(), chat_factory=factory)
+    service = QAService(model=chat)
+    service.query_rewriter.model.invoke([{"role": "user", "content": "rewrite"}])
+    summary = build_chat("qa", output_tokens=8000, config=_settings(), chat_factory=factory)
+    summary.invoke([{"role": "user", "content": "summarize"}])
+    chat.invoke([{"role": "user", "content": "answer"}])
+    assert [body["max_tokens"] for _, body in requests] == [2048, 8000, 32000]
 
 
 def test_embedding_wire_preserves_raw_strings_and_batches(monkeypatch, mock_http):

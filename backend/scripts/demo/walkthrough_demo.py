@@ -45,8 +45,6 @@ RETRIEVAL_CONFIG: dict[str, Any] = {
     "candidate_top_k": 10,
     "top_k": 10,
     "similarity_threshold": 0.2,
-    "vector_weight": 0.75,
-    "keyword_weight": 0.25,
     "rerank_enabled": False,
 }
 

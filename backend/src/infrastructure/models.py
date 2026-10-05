@@ -22,6 +22,7 @@ def _require(config: Settings, name: str) -> str:
 
 
 def build_chat(kind: Literal["qa", "vision"] = "qa", *, config: Settings | None = None,
+               output_tokens: int | None = None,
                chat_factory: Callable[..., "BaseChatModel"] | None = None) -> "BaseChatModel":
     if kind not in {"qa", "vision"}:
         raise ValueError("聊天模型类型仅支持 qa 或 vision")
@@ -30,11 +31,17 @@ def build_chat(kind: Literal["qa", "vision"] = "qa", *, config: Settings | None 
     max_tokens = config.integer(
         f"{prefix}.completion_reserve_tokens" if kind == "qa" else f"{prefix}.max_tokens", positive=True,
     )
+    if output_tokens is not None:
+        if output_tokens <= 0:
+            raise ModelConfigurationError("模型输出预算必须为正数")
+        max_tokens = output_tokens
     if kind == "qa":
         limit = config.integer("llm.qa.context_limit_tokens", positive=True)
         safety = config.integer("llm.qa.prompt_safety_tokens", min_value=0)
         if max_tokens + safety >= limit:
             raise ModelConfigurationError("QA 总上下文必须大于输出预留与安全余量之和")
+        if config.text("llm.qa.model").lower() == "glm-5.3" and (max_tokens > 128000 or limit > 1000000):
+            raise ModelConfigurationError("GLM-5.3 配置超过模型上下文或输出上限")
     options = {
         "model": _require(config, f"{prefix}.model"),
         "base_url": _require(config, f"{prefix}.base_url"),
@@ -43,9 +50,10 @@ def build_chat(kind: Literal["qa", "vision"] = "qa", *, config: Settings | None 
         "timeout": config.integer("llm.timeout_seconds", positive=True),
         "max_retries": config.integer("llm.max_retries", min_value=0),
         "use_responses_api": False,
-        # GLM 使用 max_tokens；明确关闭 thinking，保持当前 API 契约。
-        "extra_body": {"max_tokens": max_tokens, "thinking": {"type": "disabled"}},
+        "extra_body": {"max_tokens": max_tokens, "thinking": {"type": "enabled" if kind == "qa" else "disabled"}},
     }
+    if kind == "qa":
+        options["extra_body"]["reasoning_effort"] = config.text("llm.qa.reasoning_effort")
     if chat_factory is None:
         from langchain_openai import ChatOpenAI
         chat_factory = ChatOpenAI

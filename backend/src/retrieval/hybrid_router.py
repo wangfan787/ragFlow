@@ -9,7 +9,7 @@ from backend.src.infrastructure.cross_encoder_reranker import CrossEncoderRerank
 from backend.src.infrastructure.elasticsearch_store import ElasticsearchStore
 from backend.src.infrastructure.rule_reranker import RuleReranker
 from backend.src.retrieval.embedding_retriever import EmbeddingRetriever
-from backend.src.retrieval.hybrid_fusion import HybridFusion
+from backend.src.retrieval.hybrid_fusion import HybridFusion, RRF_RANK_CONSTANT
 from backend.src.retrieval.keyword_retriever import KeywordRetriever
 from langchain_core.documents import Document
 from backend.src.retrieval.vectorizer import query_terms
@@ -193,7 +193,8 @@ class HybridRouter:
         query: str,
         retrieval_config: RetrievalConfig | dict | None = None,
     ) -> tuple[list[Document], dict]:
-        """执行检索并返回请求级 trace（不依赖共享的 last_trace 状态）。
+        """
+        执行检索并返回请求级 trace（不依赖共享的 last_trace 状态）。
 
         通道门控：retrieval_mode 未选中的通道完全不执行，保证
         Vector-only / Keyword-only 是严格消融，而不是权重为 0 的假单通道。
@@ -220,21 +221,11 @@ class HybridRouter:
                 },
             )
 
-        # 单通道模式下把该通道权重置为 1：融合分与通道原始分同尺度，
-        # 相似度阈值才能在 vector/keyword/hybrid 三种模式之间横向比较。
-        if config.retrieval_mode == "vector":
-            vector_weight, keyword_weight = 1.0, 0.0
-        elif config.retrieval_mode == "keyword":
-            vector_weight, keyword_weight = 0.0, 1.0
+        # 单通道没有融合，保留通道分数；Hybrid 使用固定缩放的等权 RRF。
+        if config.retrieval_mode == "hybrid":
+            fused_rows = self.fusion.fuse(vector_rows, keyword_rows)
         else:
-            vector_weight, keyword_weight = config.vector_weight, config.keyword_weight
-
-        fused_rows = self.fusion.fuse(
-            vector_rows,
-            keyword_rows,
-            vector_weight=vector_weight,
-            keyword_weight=keyword_weight,
-        )
+            fused_rows = vector_rows if config.retrieval_mode == "vector" else keyword_rows
 
         # 两种粒度共用同一批 Child 候选；Parent 去重不扩大召回池。
         rerank_top_n = (
@@ -371,11 +362,8 @@ class HybridRouter:
             "keyword_candidate_count": len(keyword_rows),
             "fused_candidate_count": len(fused_rows),
             "eligible_candidate_count": len(eligible_rows),
-            "vector_weight": config.vector_weight,
-            "keyword_weight": config.keyword_weight,
-            # 单通道模式下的实际生效权重（可能与配置权重不同，见上方说明）
-            "vector_weight_effective": vector_weight,
-            "keyword_weight_effective": keyword_weight,
+            "fusion_method": "rrf" if config.retrieval_mode == "hybrid" else None,
+            "rrf_rank_constant": RRF_RANK_CONSTANT if config.retrieval_mode == "hybrid" else None,
             "similarity_threshold": config.similarity_threshold,
             "rerank_enabled": config.rerank_enabled,
             "rerank_backend": config.rerank_backend if config.rerank_enabled else None,

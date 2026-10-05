@@ -40,7 +40,6 @@ SWEEP_AXES: dict[str, list[dict]] = {
     "candidate_top_k": [{"candidate_top_k": value} for value in (10, 30, 50, 100)],
     "top_k": [{"top_k": value} for value in (3, 5, 10)],
     "similarity_threshold": [{"similarity_threshold": value} for value in (0.0, 0.05, 0.1, 0.2)],
-    "vector_weight": [{"vector_weight": value} for value in (0.5, 0.6, 0.7, 0.75, 0.8, 0.9)],
     "rerank": [
         {"rerank_enabled": True, "rerank_backend": "rule", "rerank_top_n": value}
         for value in (10, 20, 30)
@@ -171,7 +170,7 @@ def sweep_evidence(dataset_dir: Path, stack, split: str = "dev") -> dict:
         rows = []
         for query in queries:
             try:
-                payload = stack.qa.query(query["question"], qa_config=qa_overrides)
+                payload = stack.qa.query(query["question"], qa_config=qa_overrides, owner_id="evaluation")
                 rows.append(qa_run_row(query, payload, meta))
             except Exception as exc:  # noqa: BLE001
                 from evaluation.runner.production_adapter import NO_EVIDENCE_CODES

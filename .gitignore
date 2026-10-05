@@ -57,3 +57,6 @@ PROXY_USAGE.md
 # Private YAML overrides and local runtime data.
 config/local.yaml
 data/
+
+# Temporary working notes for in-progress improvements (not for archival).
+.mytask/

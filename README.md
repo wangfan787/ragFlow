@@ -18,6 +18,7 @@ conda activate agent
 - 核心测试：`python -m pytest -q`（包含后端和评测测试，不依赖大型数据集）。
 - 真实链路演示：`python -m backend.scripts.demo.walkthrough_demo --source demo`；准备 T2 子集后可选 `--source t2`。需要本地 ES 和 `config/local.yaml` 模型配置，仅操作 `rag-demo-*` 索引。
 - [CRUD-RAG 评测与调参](evaluation/README.md)；[T2Retrieval 下载、向量化与评测](dataset/T2Retrieval-subset/README.md)。
+- [会话 API 与上下文压缩](docs/conversation.md)：服务端保存历史，自动摘要默认生效。
 
 重排默认关闭，保留规则基线与可选 CrossEncoder；后者依赖 `backend/requirements-rerank.txt`。
 开启后可通过 `retrieval.rerank_level` 选择 `child` 或 `parent`（仅 CrossEncoder 支持 Parent）；

@@ -196,8 +196,10 @@ def qa_run_row(query: dict, payload: dict, meta: dict) -> dict:
         "evidence_doc_ids": list(trace.get("qa_budget", {}).get("evidence_doc_ids", [])),
         "answer": payload.get("answer", ""),
         "citations": citations,
-        # P0 no_evidence 协议：产品响应自带 status；answered 映射回历史 run 的 "ok"
-        "status": "no_evidence" if payload.get("status") == "no_evidence" else "ok",
+        # 截断正文保留供诊断，但不得计为完整回答成功。
+        "status": {"no_evidence": "no_evidence", "incomplete": "error"}.get(payload.get("status"), "ok"),
+        **({"error": "GENERATION_INCOMPLETE: " + str(trace.get("finish_reason", "unknown"))}
+           if payload.get("status") == "incomplete" else {}),
         "latency_ms": {key: value for key, value in timings.items() if isinstance(value, (int, float))},
         "usage": _numeric_usage(trace.get("usage", {})),
         "meta": meta,

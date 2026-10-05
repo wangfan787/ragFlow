@@ -11,8 +11,6 @@ class RetrievalConfig(RequestConfig):
     top_k: int = Field(gt=0)
     candidate_top_k: int = Field(gt=0)
     similarity_threshold: float = Field(ge=0, le=1)
-    vector_weight: float = Field(ge=0)
-    keyword_weight: float = Field(ge=0)
     rerank_enabled: bool
     rerank_backend: Literal["rule", "cross-encoder"]
     rerank_level: Literal["child", "parent"]
@@ -30,11 +28,6 @@ class RetrievalConfig(RequestConfig):
     def validate_relationships(self):
         if self.rerank_enabled and self.rerank_level == "parent" and self.rerank_backend != "cross-encoder":
             raise ValueError("parent reranking requires rerank_backend=cross-encoder")
-        total = self.vector_weight + self.keyword_weight
-        if total <= 0:
-            raise ValueError("sum of weights must be > 0")
-        object.__setattr__(self, "vector_weight", self.vector_weight / total)
-        object.__setattr__(self, "keyword_weight", self.keyword_weight / total)
         if self.rerank_top_n is not None and not self.top_k <= self.rerank_top_n <= self.candidate_top_k:
             raise ValueError("rerank_top_n must satisfy top_k <= rerank_top_n <= candidate_top_k")
         return self

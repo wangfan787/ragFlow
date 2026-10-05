@@ -90,7 +90,7 @@ class QueryRewriteService:
         if max_query_tokens <= 0:
             raise ValueError("max_query_tokens must be > 0")
         self.context_limit_tokens = settings.integer("llm.qa.context_limit_tokens", positive=True)
-        self.completion_reserve_tokens = settings.integer("llm.qa.completion_reserve_tokens", positive=True)
+        self.completion_reserve_tokens = settings.integer("query_rewrite.output_tokens", positive=True)
         self.model = model
         self.enabled = enabled
         self.normalize_colloquial = normalize_colloquial
@@ -165,11 +165,13 @@ class QueryRewriteService:
         system: dict[str, str],
         history: Sequence[dict[str, str]],
         current_query: str,
+        summary: str = "",
     ) -> list[dict[str, str]]:
         transcript = json.dumps(
             {
                 "conversation_history": list(history),
                 "current_query": current_query,
+                "conversation_summary": summary,
             },
             ensure_ascii=False,
             separators=(",", ":"),
@@ -191,6 +193,7 @@ class QueryRewriteService:
         system: dict[str, str],
         current_query: str,
         prompt_limit: int,
+        summary: str = "",
     ) -> tuple[list[dict[str, str]], int]:
         selected_turns: list[list[dict[str, str]]] = []
         recent_turns = self._group_turns(history)[-self.max_history_turns :]
@@ -201,7 +204,7 @@ class QueryRewriteService:
             if history_tokens > self.max_history_tokens:
                 break
             if self.model is None or count_message_tokens(
-                self._messages(system, trial_history, current_query)
+                self._messages(system, trial_history, current_query, summary)
             ) > prompt_limit:
                 break
             selected_turns = trial_turns
@@ -224,12 +227,13 @@ class QueryRewriteService:
         self,
         question: str,
         history: Sequence[dict[str, str]] | None = None,
+        *, summary: str = "",
     ) -> QueryRewriteResult:
         original = question.strip()
         clean_history = self._clean_history(history)
         history_count = len(clean_history)
         # 带历史做多轮指代消解；无历史且开启口语规范化时做口语问句规范化
-        mode = "condense" if clean_history else "colloquial"
+        mode = "condense" if clean_history or summary else "colloquial"
         if not self.enabled:
             return self._result(
                 original,
@@ -237,7 +241,7 @@ class QueryRewriteService:
                 history_message_count=history_count,
                 fallback_reason="disabled",
             )
-        if not clean_history and not self.normalize_colloquial:
+        if not clean_history and not summary and not self.normalize_colloquial:
             return self._result(
                 original,
                 status="skipped",
@@ -263,12 +267,15 @@ class QueryRewriteService:
                 - self.completion_reserve_tokens
                 - self.prompt_safety_tokens
             )
-            if clean_history:
+            provider_limit = settings.integer("llm.qa.input_limit_tokens", min_value=0)
+            if provider_limit:
+                prompt_limit = min(prompt_limit, provider_limit)
+            if clean_history or summary:
                 system = {
                     "role": "system",
                     "content": _SYSTEM_PROMPT.format(today=dt.date.today().isoformat()),
                 }
-                base_messages = self._messages(system, [], original)
+                base_messages = self._messages(system, [], original, summary)
                 if prompt_limit <= 0 or count_message_tokens(base_messages) > prompt_limit:
                     return self._result(
                         original,
@@ -279,9 +286,9 @@ class QueryRewriteService:
                     )
 
                 selected, history_tokens = self._select_history(
-                    clean_history, system, original, prompt_limit
+                    clean_history, system, original, prompt_limit, summary
                 )
-                if not selected:
+                if not selected and not summary:
                     return self._result(
                         original,
                         status="fallback",
@@ -290,7 +297,7 @@ class QueryRewriteService:
                         mode=mode,
                     )
 
-                messages = self._messages(system, selected, original)
+                messages = self._messages(system, selected, original, summary)
             else:
                 system = {
                     "role": "system",
@@ -307,7 +314,10 @@ class QueryRewriteService:
                     )
 
             prompt_tokens = count_message_tokens(messages)
-            response = self.model.invoke(messages).content
+            message = self.model.invoke(messages)
+            if (getattr(message, "response_metadata", None) or {}).get("finish_reason") not in (None, "stop", "end_turn"):
+                raise ValueError("rewrite incomplete")
+            response = message.content
             standalone = self._parse_response(response)
             output_tokens = self._history_tokens([{"role": "user", "content": standalone}])
             if output_tokens > self.max_query_tokens:

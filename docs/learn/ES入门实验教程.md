@@ -1,8 +1,7 @@
 # ES 入门实验教程（对着 ragFlow 真实索引学）
 
 目的：搞懂 Elasticsearch 到底怎么用，能看懂面试官问的「父子关系在 ES 里怎么设计」这类问题。
-学法：全部命令在你本机 ES（`http://localhost:9200`，8.19.3）上直接执行。只读实验打产品索引
-`rag-mvp-chunks`（22 条真实数据），写入实验打沙箱索引 `es-learn-demo`，不污染产品数据。
+学法：命令默认连接本机 ES（`http://localhost:9200`）。历史实验版本为 8.19.3，产品索引曾有 22 条数据；实际版本与条数以查询结果为准。只读实验打产品索引 `rag-mvp-chunks`，写入实验打沙箱索引 `es-learn-demo`。2026-09-23 已按当前代码校正文中生产行为，未重新执行写入实验。
 
 一键跑完所有实验：`bash docs/learn/es-demo.sh`
 单个实验想手动敲：直接从下文复制 curl 命令。
@@ -29,7 +28,7 @@ ES 就是一个**只讲 HTTP + JSON 的搜索服务**：所有操作都是发一
 | table | index | `rag-mvp-chunks` |
 | 表结构 schema | mapping | `elasticsearch_store.py` 的 `_base_mapping()` |
 | row | document | 一条父块或一条子块 |
-| 主键 id | `_id` | 确定性 chunk_id，如 `sample_v2_4e8910b7cc71_2` |
+| 主键 id | `_id` | 确定性 chunk_id，当前格式为 `<doc_id>_v3_<profile_hash>_<序号>` |
 
 ---
 
@@ -41,8 +40,8 @@ ES 就是一个**只讲 HTTP + JSON 的搜索服务**：所有操作都是发一
 curl -s "http://localhost:9200/_cat/indices?v"
 ```
 
-`v` 表示带表头。你会看到 `rag-mvp-chunks`（产品索引，22 docs）、`rag-eval-crud_rag_mini_v1`
-（评测索引，9430 docs）等。`docs.count` 就是文档条数。
+`v` 表示带表头。历史实验有 `rag-mvp-chunks`（22 条）和 `rag-eval-crud_rag_mini_v1`
+（9,430 条），当前是否存在及条数以实际结果为准。项目平铺保存 Parent/Child，所以这些记录数不是上传文件数。
 
 ### 2.2 看 mapping（表结构）
 
@@ -80,10 +79,9 @@ curl -s "http://localhost:9200/rag-mvp-chunks/_search" -H 'Content-Type: applica
 2. 关系是双向冗余的：子块有 `parent_id` 指向父块，父块有 `child_ids` 数组指向所有子块；
 3. 只有子块有 `embedding_dim: 1024` 和向量字段，父块没有向量——父块只做召回后的上下文扩展，不参与向量检索。
 
-再看 `_id`：形如 `sample_v2_4e8910b7cc71_2`，由 `doc_id + 版本号 + 切分策略哈希 + 序号`
-拼成。同一个文档用同样策略重新入库，`_id` 不变，ES 自动覆盖旧记录——**确定性 ID 让重索引天然幂等**。
+再看 `_id`：当前格式为 `<doc_id>_v3_<profile_hash>_<序号>`，由文档 ID、版本号、策略哈希和序号组成。历史索引可能仍保留 v2 ID。相同 doc_id、策略和输入重新入库时，ID 稳定并覆盖旧记录；新分块写入后清理不再存在的 ID。这是存储层的替换语义，不代表重复任务不会重算，也不代表重新上传会复用 doc_id。
 
-### 2.4 分词：为什么中文查询要预分词
+### 2.4 分词：当前中文查询如何被处理
 
 ```bash
 # 看 ES 默认分词器怎么切中文
@@ -94,10 +92,9 @@ curl -s "http://localhost:9200/rag-mvp-chunks/_analyze" -H 'Content-Type: applic
 你会发现输出是 `分 布 式 锁 的 过 期 时 间`——standard 分词器对中文只会**逐字切**。
 所以查询「过期时间」实际变成「过 OR 期 OR 时 OR 间」，单字命中不算命中词。
 
-这就是项目里 `important_tks`/`question_tks` 这类字段存在的原因：入库前用
-`vectorizer.py` 的 `tokenize()` 自己做中文切分——**单字 + 相邻二元组合**
-（「过期」会同时产出 `过`、`期`、`过期`），再用空格拼好存进 text 字段，
-让 ES 的默认分词器拿到的是已经切好的词。
+当前 BM25 直接查询 `doc_name`、`section_path`、`content`，没有先用 `vectorizer.py` 预分词，也没有写入并查询 `important_tks/question_tks` 增强字段。`tokenize()` 的单字/bigram 用于规则重排等应用层逻辑。
+
+即使未来将 bigram 用空格拼入 text 字段，standard 仍会重新切分，不会自动保留这些词项。真正保留预分词结果需要匹配的 analyzer，并评估索引重建与查询侧一致性；这仍是候选方案。
 
 ### 2.5 复现产品里的 BM25 关键词检索
 
@@ -134,7 +131,7 @@ curl -s "http://localhost:9200/rag-mvp-chunks/_search" -H 'Content-Type: applica
 # term：不分词，整值精确匹配，用于过滤
 curl -s "http://localhost:9200/rag-mvp-chunks/_count" -H 'Content-Type: application/json' \
   -d '{"query":{"term":{"chunk_role":"child"}}}'
-# → count = 11
+# 历史样例为 11；以当前查询结果为准
 
 # match：查询串先分词再查倒排索引，用于检索打分
 curl -s "http://localhost:9200/rag-mvp-chunks/_count" -H 'Content-Type: application/json' \
@@ -145,7 +142,7 @@ curl -s "http://localhost:9200/rag-mvp-chunks/_count" -H 'Content-Type: applicat
 
 ### 2.7 mget：复现「子块命中 → 取父块」链路
 
-产品检索的完整动作是：先向量/BM25 召回子块，再拿子块的 `parent_id` 按主键取父块正文拼上下文。
+产品检索的完整动作是：先向量/BM25 召回子块，再拿子块的 `parent_id` 按主键取父块正文拼上下文或作为 Parent 重排输入。
 第二步就是 mget（对应 `query_by_ids()`，`elasticsearch_store.py:251`）：
 
 ```bash
@@ -201,7 +198,7 @@ curl -s -X PUT "http://localhost:9200/es-learn-demo/_doc/doc1_p1" -H 'Content-Ty
 ```
 
 `_version` 从 1 变 2，`result` 从 `created` 变 `updated`——**同 ID 就是覆盖，不是新增**。
-这就是项目把 `_id` 设计成确定性 chunk_id 的底气：重跑入库一百遍，索引里也只有一份。
+这就是确定性 chunk_id 的用途：同一文档重复入库会覆盖对应记录；分块集合变化时还要删除陈旧 ID。重复上传会生成新 doc_id，不属于同一次替换。
 
 ### 3.3 bulk 批量写
 
@@ -217,10 +214,9 @@ curl -s -X POST "http://localhost:9200/es-learn-demo/_bulk" -H 'Content-Type: ap
 注意两点：bulk 的格式是 **NDJSON**（两行一组：动作行 + 数据行），必须 `--data-binary`（不能
 用 `-d`，否则换行被吞）；项目里 `upsert()` 就是用 bulk 把父子两类记录一次写进去的。
 
-**必踩的坑（也是面试常问点）**：bulk 写完立刻查是查不到的。ES 是**近实时（NRT）**——写入先进
-内存缓冲区，默认每 1 秒做一次 refresh，把缓冲区内容变成倒排索引里可搜的段。想立刻可搜就手动
-`POST /es-learn-demo/_refresh`。这解释了一个工程事实：项目入库接口返回成功 ≠ 数据已可检索，
-只是已落盘；好在真实链路里入库和检索之间隔了人工操作的时间，1 秒 refresh 无感。
+**近实时可见性**：这个沙箱 bulk 示例没有传 refresh 参数，紧接着搜索可能还看不到新记录，所以脚本显式调用 `POST /es-learn-demo/_refresh`。
+
+生产代码不同：`ElasticsearchStore.upsert()` 使用 `bulk(..., refresh="wait_for")` 等待刷新，删除旧块和删除文档也设置 `refresh=True`。因此不能说生产入库依靠用户停顿等待数据可见；沙箱示例用于理解默认写入行为。refresh 讨论的是搜索可见性，不应直接等同于持久化落盘保证。
 
 ### 3.4 组合查询：bool + must + filter
 
@@ -270,8 +266,10 @@ curl -s "http://localhost:9200/es-learn-demo/_count"
 curl -s -X DELETE "http://localhost:9200/es-learn-demo"
 ```
 
-项目里删文档的完整语义是**先写新的、再删旧的**（`upsert()` 之后紧跟
-`delete_stale_by_doc_id()`），保证任何时刻文档至少有一份可检索的记录。
+项目要区分两个动作：
+
+- **重新入库**：先 `upsert()`，成功后 `delete_stale_by_doc_id()`，避免先清空旧索引；整个过程不是跨记录原子事务，不能承诺任意失败下完整版本始终可用。
+- **删除文档**：`DocumentService.delete()` 先删该文档的全部 ES 记录，再删源文件和文档登记；ES 失败保留登记以便重试。图片资产引用及无引用文件回收仍未实现。
 
 ---
 

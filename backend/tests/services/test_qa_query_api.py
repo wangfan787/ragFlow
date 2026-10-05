@@ -323,7 +323,7 @@ class FakeQueryRewriter:
         self.result = result
         self.calls: list[tuple[str, list]] = []
 
-    def rewrite(self, question, history=None):
+    def rewrite(self, question, history=None, *, summary=""):
         self.calls.append((question, list(history or [])))
         return self.result
 
@@ -340,6 +340,78 @@ _HISTORY = [
 ]
 
 
+def _history_session():
+    from backend.src.apps.restful_apis import qa as qa_api
+    store = qa_api.service.sessions
+    request = store.begin("alice", None, None, {"seed": True})
+    result = store.complete(request, _HISTORY[0]["content"], {
+        "answer": _HISTORY[1]["content"], "status": "answered", "citations": []})
+    return result["session_id"]
+
+
+def test_client_history_is_rejected(monkeypatch):
+    _install_fakes(monkeypatch)
+    client, token = _client_with_token()
+    for path in ("/qa/query", "/qa/query/stream"):
+        response = client.post(path, json={"question": "hello", "history": _HISTORY},
+                               headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 422
+
+
+def test_session_create_read_and_owner_check(monkeypatch):
+    from backend.src.apps.services.common_service import create_access_token
+    _install_fakes(monkeypatch)
+    client, token = _client_with_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    created = client.post("/qa/sessions", headers=headers).json()["data"]
+    session_id = created["session_id"]
+    assert created["turns"] == []
+    result = client.post("/qa/query", json={"question": "hello", "session_id": session_id, "request_id": "round-1"}, headers=headers)
+    assert result.status_code == 200
+    read = client.get(f"/qa/sessions/{session_id}", headers=headers)
+    assert read.json()["data"]["turns"][0]["question"] == "hello"
+    assert client.get(f"/qa/sessions/{session_id}").status_code == 401
+    other = {"Authorization": f"Bearer {create_access_token('bob')}"}
+    assert client.get(f"/qa/sessions/{session_id}", headers=other).status_code == 403
+    assert client.post("/qa/query", json={"question": "hello", "session_id": session_id}, headers=other).status_code == 403
+    assert client.post("/qa/query", json={"question": "hello", "session_id": "missing"}, headers=headers).status_code == 404
+
+
+def test_first_request_retry_returns_same_session_without_generation(monkeypatch):
+    router = _install_fakes(monkeypatch)
+    client, token = _client_with_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    body = {"question": "hello", "request_id": "first-request"}
+    first = client.post("/qa/query", json=body, headers=headers).json()["data"]
+    retry = client.post("/qa/query/stream", json=body, headers=headers)
+    assert _parse_sse(retry.text) == [("done", first)]
+    assert router.received_questions == ["hello"]
+    assert client.post("/qa/query", json={**body, "question": "different"}, headers=headers).status_code == 409
+
+
+def test_conversation_without_history_explains_missing_context(monkeypatch):
+    router = _install_fakes(monkeypatch)
+    client, token = _client_with_token()
+    response = client.post("/qa/query", json={"question": "翻译上面的回答", "qa_config": {"answer_mode": "conversation"}},
+                           headers={"Authorization": f"Bearer {token}"})
+    data = response.json()["data"]
+    assert data["status"] == "answered" and data["citations"] == []
+    assert "没有可用的此前对话" in data["answer"] and router.received_questions == []
+
+
+def test_no_evidence_is_stored_as_status_not_fake_answer(monkeypatch):
+    from backend.src.apps.restful_apis import qa as qa_api
+    from backend.src.apps.services.conversation_context import working_turns
+    router = _install_fakes(monkeypatch)
+    monkeypatch.setattr(router, "retrieve_detailed", lambda *args, **kwargs: ([], {}))
+    client, token = _client_with_token()
+    response = client.post("/qa/query", json={"question": "hello"}, headers={"Authorization": f"Bearer {token}"})
+    data = response.json()["data"]
+    session = qa_api.service.sessions.read("alice", data["session_id"])
+    assert session["turns"][0]["status"] == "no_evidence"
+    assert working_turns(session) == []
+
+
 def test_query_applies_rewrite_with_history(monkeypatch) -> None:
     """带历史时执行改写：检索与后续链路使用独立问句，trace 记录改写结果。"""
     router = _install_fakes(monkeypatch)
@@ -349,7 +421,7 @@ def test_query_applies_rewrite_with_history(monkeypatch) -> None:
 
     response = client.post(
         "/qa/query",
-        json={"question": "它多少钱？", "history": _HISTORY},
+        json={"question": "它多少钱？", "session_id": _history_session()},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
@@ -378,7 +450,7 @@ def test_query_rewrite_fallback_keeps_original_question(monkeypatch) -> None:
 
     response = client.post(
         "/qa/query",
-        json={"question": "它多少钱？", "history": _HISTORY},
+        json={"question": "它多少钱？", "session_id": _history_session()},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
@@ -417,7 +489,7 @@ def test_query_rewrites_skipped_when_disabled_by_qa_config(monkeypatch) -> None:
         "/qa/query",
         json={
             "question": "独立问题",
-            "history": _HISTORY,
+            "session_id": _history_session(),
             "qa_config": {"query_rewrite_enabled": False},
         },
         headers={"Authorization": f"Bearer {token}"},
@@ -453,7 +525,7 @@ def test_query_stream_applies_rewrite_and_records_trace(monkeypatch) -> None:
 
     response = client.post(
         "/qa/query/stream",
-        json={"question": "它多少钱？", "history": _HISTORY},
+        json={"question": "它多少钱？", "session_id": _history_session()},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200

@@ -108,6 +108,7 @@ def test_qa_window_mode_default_unchanged_and_request_scoped():
     payload_two = service.query("第二问", qa_config={"evidence_window_tokens": 100000})
 
     assert payload_two["trace"]["config"]["qa_config"] == {
+        "answer_mode": "knowledge",
         "context_top_k": 5, "evidence_mode": "window", "evidence_window_tokens": 100000,
         "query_rewrite_enabled": True,
         "colloquial_normalization_enabled": False,
@@ -182,8 +183,8 @@ def test_qa_default_path_invokes_langchain_and_reuses_model(monkeypatch):
     monkeypatch.setattr(qa_service, "build_chat", lambda kind: built.append(kind) or model)
     service = QAService()
     assert built == []
-    assert service._generate_answer("question", []).answer == "answer [1]"
-    assert service._generate_answer("second", []).answer == "answer [1]"
+    assert service._generate_answer(service._evidence_messages("question", [])).answer == "answer [1]"
+    assert service._generate_answer(service._evidence_messages("second", [])).answer == "answer [1]"
     assert built == ["qa"]
     assert "second" in model.messages[1]["content"]
 
@@ -199,7 +200,7 @@ def test_qa_model_failure_or_empty_output_never_becomes_fake_answer(output):
 
     service = QAService(model=SimpleNamespace(invoke=invoke))
     with pytest.raises(HTTPException) as error:
-        service._generate_answer("question", [])
+        service._generate_answer(service._evidence_messages("question", []))
     assert error.value.status_code == 502
 
 

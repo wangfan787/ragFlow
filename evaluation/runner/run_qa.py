@@ -66,6 +66,7 @@ def run_qa_variant(
                 query["question"],
                 retrieval_config=retrieval_overrides or None,
                 qa_config=qa_overrides or None,
+                owner_id="evaluation",  # 每题省略 session_id，创建独立空会话
             )
             rows.append(qa_run_row(query, payload, meta))
         except Exception as exc:  # noqa: BLE001 - 逐题录制失败语义
